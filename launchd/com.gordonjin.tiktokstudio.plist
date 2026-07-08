@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.gordonjin.tiktokstudio</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/gordon.jin/dev/tiktok-studio/.venv/bin/python</string>
+    <string>-m</string>
+    <string>uvicorn</string>
+    <string>app.main:app</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8765</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/gordon.jin/dev/tiktok-studio</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/Users/gordon.jin/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/gordon.jin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/gordon.jin/TikTokStudio/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gordon.jin/TikTokStudio/logs/launchd.err</string>
+</dict>
+</plist>
