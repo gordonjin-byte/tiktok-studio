@@ -4,6 +4,7 @@
 # seed SFX/music, and a logon Scheduled Task so the server auto-starts.
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"  # 10x faster Invoke-WebRequest on PS 5.1
 $AppDir  = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $DataDir = Join-Path $env:USERPROFILE "TikTokStudio"
 $Model   = Join-Path $DataDir "models\ggml-small.en.bin"

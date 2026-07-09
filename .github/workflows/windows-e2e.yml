@@ -1,0 +1,110 @@
+name: windows-e2e
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install app deps
+        run: pip install -r requirements.txt
+
+      - name: Install ffmpeg (gyan build, includes libass)
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Install whisper.cpp
+        shell: pwsh
+        run: |
+          $dir = "$env:USERPROFILE\TikTokStudio\tools\whisper"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-bin-x64.zip" -OutFile whisper.zip
+          Expand-Archive whisper.zip -DestinationPath $dir -Force
+          Get-ChildItem -Recurse $dir -Include *.exe | Select-Object -ExpandProperty FullName
+
+      - name: Cache whisper model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/TikTokStudio/models/ggml-small.en.bin
+          key: whisper-model-small-en
+
+      - name: Download whisper model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\TikTokStudio\models" | Out-Null
+          Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin" `
+            -OutFile "$env:USERPROFILE\TikTokStudio\models\ggml-small.en.bin"
+
+      - name: Seed SFX/music
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\TikTokStudio\sfx","$env:USERPROFILE\TikTokStudio\music" | Out-Null
+          python scripts/seed_assets.py "$env:USERPROFILE\TikTokStudio\sfx" "$env:USERPROFILE\TikTokStudio\music"
+
+      - name: Synthesize spoken test video (Windows TTS + ffmpeg)
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Speech
+          $tts = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $tts.SetOutputToWaveFile("$env:TEMP\speech.wav")
+          $script = "You hit send, and a second later it is on a phone across the planet. " +
+                    "Here is the problem with the old way. Here is the problem with the old web way. " +
+                    "The app keeps asking the server for new messages. That is polling, and it is wasteful. " +
+                    "Instead we open a web socket. It is a single connection that stays open. " +
+                    "Follow for the next episode."
+          $tts.Speak($script)
+          $tts.Dispose()
+          ffmpeg -y -v error -f lavfi -i "testsrc2=size=720x1280:rate=30" -i "$env:TEMP\speech.wav" `
+            -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac test_video.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 test_video.mp4
+
+      - name: Run full pipeline headless (heuristic brain — no claude on CI)
+        shell: pwsh
+        run: |
+          python -c "from app import config; import json; print(json.dumps(config.binary_report(), indent=1))"
+          python -m app.pipeline.run test_video.mp4 --no-brain --variants hook_a,hook_b
+
+      - name: Assert outputs
+        shell: pwsh
+        run: |
+          $outs = Get-ChildItem -Recurse "$env:USERPROFILE\TikTokStudio\renders" -Filter out.mp4
+          if ($outs.Count -lt 2) { throw "expected 2 rendered variants, found $($outs.Count)" }
+          foreach ($o in $outs) {
+            $info = ffprobe -v error -show_entries stream=width,height -of csv=p=0 $o.FullName | Select-Object -First 1
+            Write-Host "$($o.FullName): $info"
+            if ($info -notmatch "1080,1920") { throw "wrong resolution: $info" }
+          }
+          $qc = Get-ChildItem -Recurse "$env:USERPROFILE\TikTokStudio\renders" -Filter qc.json
+          foreach ($q in $qc) { Write-Host "QC:"; Get-Content $q.FullName | Select-Object -First 6 }
+
+      - name: Boot server and smoke-test API
+        shell: pwsh
+        run: |
+          $proc = Start-Process -PassThru -NoNewWindow python -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8765"
+          Start-Sleep -Seconds 8
+          $stats = Invoke-RestMethod "http://127.0.0.1:8765/api/stats"
+          Write-Host ($stats | ConvertTo-Json -Depth 4)
+          $schema = Invoke-RestMethod "http://127.0.0.1:8765/api/settings/schema"
+          if ($schema.schema.Count -lt 30) { throw "settings schema too small: $($schema.schema.Count)" }
+          $videos = Invoke-RestMethod "http://127.0.0.1:8765/api/videos"
+          if ($videos.videos.Count -lt 1) { throw "pipeline video missing from history" }
+          Write-Host "history rows: $($videos.videos.Count)"
+          Stop-Process -Id $proc.Id -Force
+
+      - name: Upload rendered variants as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-renders
+          path: ~/TikTokStudio/renders/**/out.mp4
+          retention-days: 7
