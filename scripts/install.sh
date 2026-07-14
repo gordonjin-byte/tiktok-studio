@@ -24,6 +24,14 @@ for bin in /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg /opt/homebrew/bin/whisper-cl
 done
 [ -x "$HOME/.local/bin/claude" ] || echo "WARN: claude CLI not found — AI edit decisions will use heuristic fallback"
 
+echo "→ node / remotion (script-driven overlays)"
+command -v node >/dev/null 2>&1 || { echo "MISSING: node >=20 (brew install node@20)"; exit 1; }
+NODE_MAJOR=$(node -e 'console.log(process.versions.node.split(".")[0])')
+[ "$NODE_MAJOR" -ge 20 ] || { echo "MISSING: node >=20 (found $(node -v))"; exit 1; }
+(cd "$APP_DIR/remotion" && npm ci --no-fund --no-audit)
+(cd "$APP_DIR/remotion" && npx remotion browser ensure)
+(cd "$APP_DIR/remotion" && npm run catalog:build)
+
 echo "→ whisper model"
 if [ ! -f "$MODEL" ]; then
   echo "  downloading ggml-small.en.bin (488MB)…"

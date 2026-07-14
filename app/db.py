@@ -56,9 +56,52 @@ CREATE TABLE IF NOT EXISTS presets (
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS scripts (
+  id TEXT PRIMARY KEY,
+  video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  raw_text TEXT NOT NULL,
+  parsed_json TEXT,
+  episode_title TEXT, episode_category TEXT, episode_difficulty TEXT,
+  duration_estimate_s REAL, builds_text TEXT, new_piece_text TEXT,
+  alt_hooks_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'parsed',
+  checksum TEXT NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS script_cues (
+  id TEXT PRIMARY KEY,
+  script_id TEXT NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+  video_id TEXT NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  cue_index INTEGER NOT NULL,
+  cue_type TEXT NOT NULL,
+  source_text TEXT NOT NULL,
+  script_time_s REAL,
+  anchor_src_t REAL,
+  resolved_out_t0_s REAL, resolved_out_t1_s REAL,
+  match_confidence REAL,
+  decision_status TEXT NOT NULL DEFAULT 'pending',
+  decision_kind TEXT,
+  template_id TEXT, template_props_json TEXT,
+  bespoke_brief TEXT, bespoke_module_path TEXT, bespoke_error TEXT,
+  duration_s REAL,
+  advisor_checksum TEXT, advisor_status TEXT NOT NULL DEFAULT 'none',
+  user_overridden INTEGER NOT NULL DEFAULT 0,
+  error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS script_renders (
+  id TEXT PRIMARY KEY,
+  script_id TEXT NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+  render_id TEXT NOT NULL REFERENCES renders(id) ON DELETE CASCADE,
+  job_id TEXT REFERENCES jobs(id), created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_video ON jobs(video_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_renders_video ON renders(video_id);
+CREATE INDEX IF NOT EXISTS idx_scripts_video ON scripts(video_id);
+CREATE INDEX IF NOT EXISTS idx_script_cues_script ON script_cues(script_id);
+CREATE INDEX IF NOT EXISTS idx_script_cues_video ON script_cues(video_id);
+CREATE INDEX IF NOT EXISTS idx_script_renders_script ON script_renders(script_id);
+CREATE INDEX IF NOT EXISTS idx_script_renders_render ON script_renders(render_id);
 """
 
 import threading
@@ -66,6 +109,15 @@ import threading
 _local = threading.local()
 _schema_lock = threading.Lock()
 _schema_done = False
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
+    """Add a column to an existing table if missing. CREATE TABLE IF NOT EXISTS
+    is a no-op against a table that already exists, so new columns on tables
+    present in an already-provisioned db.sqlite3 need this instead."""
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if col not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 def now() -> str:
@@ -91,6 +143,9 @@ def get_conn() -> sqlite3.Connection:
         with _schema_lock:
             if not _schema_done:
                 conn.executescript(_SCHEMA)
+                _ensure_column(conn, "jobs", "script_id", "TEXT REFERENCES scripts(id)")
+                _ensure_column(conn, "renders", "script_fingerprint", "TEXT NOT NULL DEFAULT ''")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_script ON jobs(script_id)")
                 conn.commit()
                 _schema_done = True
         _local.conn = conn

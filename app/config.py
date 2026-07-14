@@ -60,6 +60,8 @@ if IS_WINDOWS:
     FFPROBE = _resolve("TIKTOKSTUDIO_FFPROBE", ["ffprobe"], _ffmpeg_dirs)
     WHISPER_CLI = _resolve("TIKTOKSTUDIO_WHISPER", ["whisper-cli", "main"], _whisper_dirs)
     CLAUDE_CLI = _resolve("TIKTOKSTUDIO_CLAUDE", ["claude", "claude.cmd"], _claude_dirs)
+    NODE = _resolve("TIKTOKSTUDIO_NODE", ["node"], [])
+    NPX = _resolve("TIKTOKSTUDIO_NPX", ["npx.cmd", "npx"], [])
 else:
     def _mac_ffbin(env_key: str, name: str) -> str:
         # prefer ffmpeg-full (has libass, required for caption burn) over plain
@@ -76,8 +78,16 @@ else:
     WHISPER_CLI = _resolve("TIKTOKSTUDIO_WHISPER", ["whisper-cli"],
                            [Path("/opt/homebrew/bin"), Path("/usr/local/bin")])
     CLAUDE_CLI = _resolve("TIKTOKSTUDIO_CLAUDE", ["claude"], [HOME / ".local" / "bin"])
+    NODE = _resolve("TIKTOKSTUDIO_NODE", ["node"], [Path("/opt/homebrew/bin"), Path("/usr/local/bin")])
+    NPX = _resolve("TIKTOKSTUDIO_NPX", ["npx"], [Path("/opt/homebrew/bin"), Path("/usr/local/bin")])
 
 WHISPER_MODEL = MODELS_DIR / "ggml-small.en.bin"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+REMOTION_DIR = REPO_ROOT / "remotion"
+TEMPLATE_CATALOG_PATH = REMOTION_DIR / "src" / "templates" / "catalog.json"
+# Bump when Remotion templates/render mechanics change meaningfully (part of
+# each overlay clip's cache key, alongside the advisor's per-cue spec hash).
+REMOTION_CODE_VERSION = 2
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("TIKTOKSTUDIO_PORT", "8765"))
@@ -85,7 +95,7 @@ PORT = int(os.environ.get("TIKTOKSTUDIO_PORT", "8765"))
 # Bump to invalidate cached analysis artifacts when analysis code changes.
 ANALYSIS_VERSION = 1
 # Bump when edl/captions/filters change meaningfully (part of settings_hash).
-EDL_CODE_VERSION = 1
+EDL_CODE_VERSION = 2
 
 OUT_W, OUT_H = 1080, 1920
 FPS = 30
@@ -95,8 +105,13 @@ MIN_FREE_DISK_BYTES = 5 * 1024**3  # refuse new jobs below 5GB free
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mpg", ".avi", ".mkv", ".webm"}
 
 CLAUDE_TIMEOUT_S = 240
+# Bespoke overlay codegen prompts are long (component contract + few-shot
+# example + up to 2 attempts with growing context) and can legitimately take
+# longer than a typical editorial-decision call.
+BESPOKE_CODEGEN_TIMEOUT_S = 420
 WHISPER_TIMEOUT_S = 900
 RENDER_TIMEOUT_S = 3600
+OVERLAY_RENDER_TIMEOUT_S = 600
 
 
 def ensure_dirs() -> None:
@@ -110,7 +125,8 @@ def binary_report() -> dict:
     so a broken install is diagnosable from the browser."""
     out = {}
     for label, path in (("ffmpeg", FFMPEG), ("ffprobe", FFPROBE),
-                        ("whisper", WHISPER_CLI), ("claude", CLAUDE_CLI)):
+                        ("whisper", WHISPER_CLI), ("claude", CLAUDE_CLI),
+                        ("node", NODE), ("npx", NPX)):
         found = Path(path).exists() or shutil.which(path) is not None
         out[label] = {"path": path, "found": found}
     out["whisper_model"] = {"path": str(WHISPER_MODEL), "found": WHISPER_MODEL.exists()}

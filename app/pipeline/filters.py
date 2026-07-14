@@ -29,14 +29,21 @@ _DUCK_RATIO = {"light": 4, "medium": 8, "heavy": 14}
 
 def build_filter_script(edl: dict, settings: RenderSettings, out_path: Path,
                         music_path: Path | None, sfx_whoosh: Path | None,
-                        sfx_pop: Path | None, ass_path: Path | None = None) -> dict:
+                        sfx_pop: Path | None, ass_path: Path | None = None,
+                        overlay_clips: list[dict] | None = None) -> dict:
     """Writes the filter_complex script; returns {'inputs': [...extra input paths],
     'v_label': ..., 'a_label': ...} for render.py to assemble the command.
-    The ass burn lives inside the graph (-vf can't combine with -filter_complex)."""
+    The ass burn lives inside the graph (-vf can't combine with -filter_complex).
+
+    overlay_clips: [{"cue_id","start_out","end_out","path": Path, "z_index": int}]
+    — already-resolved existing alpha clip paths (script-driven Remotion
+    overlays); render.py drops missing/failed cues before calling this."""
     s = settings
     W, H = config.OUT_W, config.OUT_H
     parts: list[str] = []
     total = edl["total_out_s"]
+    inputs: list[str] = []
+    next_input = 1
 
     # ---------- video ----------
     vlabels: list[str] = []
@@ -67,6 +74,19 @@ def build_filter_script(edl: dict, settings: RenderSettings, out_path: Path,
     if grade:
         parts.append(f"{vlab}{grade}[vgrade]")
         vlab = "[vgrade]"
+
+    # ---------- script-driven overlays (after grade, before captions so
+    # captions always stay the topmost/readable layer) ----------
+    if overlay_clips:
+        for j, clip in enumerate(sorted(overlay_clips, key=lambda c: (c.get("z_index", 0), c["start_out"]))):
+            idx = next_input
+            inputs.append(str(clip["path"]))
+            next_input += 1
+            olab = f"[vovl{j}]"
+            parts.append(
+                f"{vlab}[{idx}:v]overlay=0:0:enable='between(t,{clip['start_out']},{clip['end_out']})'{olab}")
+            vlab = olab
+
     if ass_path is not None:
         esc = str(ass_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
         parts.append(f"{vlab}ass='{esc}'[vsub]")
@@ -87,9 +107,6 @@ def build_filter_script(edl: dict, settings: RenderSettings, out_path: Path,
         alabels.append(f"[a{i}]")
     parts.append("".join(alabels) + f"concat=n={len(alabels)}:v=0:a=1[voice]")
     alab = "[voice]"
-
-    inputs: list[str] = []
-    next_input = 1
 
     # ---------- sfx ----------
     sfx_events: list[tuple[Path, float]] = []

@@ -257,6 +257,138 @@ function SettingsPanel({ schema, settings, baseline, onChange, footer }) {
     </div>`;
 }
 
+// ---------- script panel ----------
+const CUE_TYPE_LABEL = { on_screen: "on-screen", overlay: "overlay", effect: "effect" };
+
+function CueRow({ cue, videoId, onOverride, onRetry }) {
+  const [editing, setEditing] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [brief, setBrief] = useState(cue.bespoke_brief || "");
+
+  const badge = cue.decision_status === "bespoke_failed"
+    ? html`<span class="badge warn">bespoke failed</span>`
+    : cue.decision_kind === "bespoke"
+      ? html`<span class="badge bespoke">bespoke${cue.decision_status === "bespoke_ready" ? "" : "…"}</span>`
+      : cue.decision_kind === "template"
+        ? html`<span class="badge template">${cue.template_id || "template"}</span>`
+        : html`<span class="badge fallback">pending</span>`;
+
+  return html`
+    <tr>
+      <td class="muted">${CUE_TYPE_LABEL[cue.cue_type] || cue.cue_type}</td>
+      <td>${cue.source_text}</td>
+      <td>${badge}${cue.user_overridden ? html` <span class="muted small">(edited)</span>` : ""}
+        ${cue.render_error && html`<div class="muted small" style="color:var(--red)">render failed: ${cue.render_error.slice(0, 120)}</div>`}
+      </td>
+      <td>
+        ${cue.has_preview && html`
+          <button class="small" onClick=${() => setShowPreview((s) => !s)}>${showPreview ? "hide" : "preview"}</button>`}
+        ${cue.decision_status === "bespoke_failed" && html`
+          <button class="small" onClick=${() => onRetry(cue.id)}>retry</button>`}
+        <button class="small" onClick=${() => setEditing((e) => !e)}>edit</button>
+      </td>
+    </tr>
+    ${showPreview && cue.has_preview && html`
+      <tr>
+        <td></td>
+        <td colspan="3">
+          <video class="overlay-preview" src=${`/api/videos/${videoId}/overlays/${cue.id}/preview`}
+            controls loop muted autoplay />
+          <div class="muted small">isolated on a checkerboard background — not the final composited timing</div>
+        </td>
+      </tr>`}
+    ${editing && html`
+      <tr>
+        <td></td>
+        <td colspan="3">
+          <div class="ctl">
+            <label>Rewrite as a bespoke overlay brief</label>
+            <textarea rows="2" value=${brief} onInput=${(e) => setBrief(e.target.value)}
+              placeholder="Describe exactly what this overlay should show…" />
+          </div>
+          <button class="small primary" onClick=${() => { onOverride(cue.id, brief); setEditing(false); }}>
+            save & regenerate
+          </button>
+        </td>
+      </tr>`}`;
+}
+
+function ScriptPanel({ videoId, activeScriptJob, onRenderWithScript }) {
+  const [script, setScript] = useState(undefined); // undefined = loading, null = none yet
+  const [raw, setRaw] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const refresh = useCallback(() =>
+    api(`/api/videos/${videoId}/script`).then(setScript).catch(() => setScript(null)), [videoId]);
+  useEffect(refresh, [videoId]);
+  useEvents((ev) => {
+    if (ev.video_id === videoId || ev.event === "reconnect") refresh();
+  });
+
+  const submit = () => {
+    if (!raw.trim()) return;
+    setSubmitting(true);
+    post(`/api/videos/${videoId}/script`, { raw_text: raw })
+      .then(() => { toastFn("Script submitted — aligning to transcript"); refresh(); })
+      .catch((e) => toastFn(e.message))
+      .finally(() => setSubmitting(false));
+  };
+  const override = (cueId, brief) =>
+    api(`/api/scripts/${script.id}/cues/${cueId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision_kind: "bespoke", bespoke_brief: brief }),
+    }).then(refresh).catch((e) => toastFn(e.message));
+  const retry = (cueId) =>
+    post(`/api/scripts/${script.id}/cues/${cueId}/regenerate-bespoke`).then(refresh).catch((e) => toastFn(e.message));
+  const replan = () => post(`/api/scripts/${script.id}/plan`)
+    .then(() => { toastFn("Re-planning overlays"); refresh(); }).catch((e) => toastFn(e.message));
+
+  if (script === undefined) return null;
+
+  if (!script) return html`
+    <div class="section">
+      <h2>Script-driven overlays</h2>
+      <div class="dropzone" style="cursor:default;padding:16px" onClick=${undefined}>
+        <div class="big">Paste your episode script</div>
+        <textarea rows="10" style="width:100%;margin-top:10px;font-family:inherit"
+          placeholder="EP 1 — Where your password actually goes&#10;Security · Beginner · ~45s...&#10;0:00  HOOK — ..."
+          value=${raw} onInput=${(e) => setRaw(e.target.value)} />
+        <button class="primary" style="margin-top:10px" disabled=${submitting} onClick=${submit}>
+          ${submitting ? "Submitting…" : "Parse & plan overlays"}
+        </button>
+      </div>
+    </div>`;
+
+  const planning = ["parsed", "aligning", "planning"].includes(script.status);
+  return html`
+    <div class="section">
+      <div class="settings-head">
+        <h2>Script-driven overlays
+          ${script.episode_category && html` <span class="badge fallback">${script.episode_category}</span>`}
+          ${script.episode_difficulty && html` <span class="badge fallback">${script.episode_difficulty}</span>`}
+        </h2>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">${script.episode_title}</div>
+      ${activeScriptJob && html`<div class="jobs"><${JobCard} job=${{ ...activeScriptJob, video_id: videoId }}
+          onCancel=${(jid) => post(`/api/jobs/${jid}/cancel`).then(refresh)} /></div>`}
+      ${script.status === "plan_failed" && html`
+        <div class="qc-box"><span class="badge warn">planning failed</span>
+          <button class="small" onClick=${replan} style="margin-left:8px">retry planning</button></div>`}
+      ${script.cues.length > 0 && html`
+        <table class="list">
+          <tr><th>type</th><th>cue</th><th>decision</th><th></th></tr>
+          ${script.cues.map((cue) => html`<${CueRow} cue=${cue} videoId=${videoId} onOverride=${override} onRetry=${retry} />`)}
+        </table>`}
+      <div class="player-actions" style="margin-top:12px">
+        <button onClick=${replan} disabled=${planning}>↻ Re-plan overlays</button>
+        <button class="primary" disabled=${script.status !== "planned"}
+          onClick=${() => onRenderWithScript(script.id)}>
+          Render with these overlays
+        </button>
+      </div>
+    </div>`;
+}
+
 // ---------- video detail ----------
 function VideoView({ id }) {
   const [video, setVideo] = useState(null);
@@ -294,10 +426,15 @@ function VideoView({ id }) {
   const activeJob = video.jobs.find((j) => j.status === "queued" || j.status === "running");
   const brainStatus = video.brain_status;
 
-  const doRender = () => {
+  const doRender = (scriptId) => {
     const variants = Object.keys(selVariants).filter((k) => selVariants[k]);
-    post(`/api/videos/${id}/render`, { settings, variants })
-      .then(() => { toastFn("Re-render queued (analysis cached — no re-transcription)"); refresh(); })
+    const body = { settings, variants };
+    if (scriptId) body.script_id = scriptId;
+    post(`/api/videos/${id}/render`, body)
+      .then(() => {
+        toastFn(scriptId ? "Re-render queued with script overlays" : "Re-render queued (analysis cached — no re-transcription)");
+        refresh();
+      })
       .catch((e) => toastFn(e.message));
   };
   const regenBrain = () =>
@@ -370,7 +507,7 @@ function VideoView({ id }) {
                       onChange=${(e) => setSelVariants((s) => ({ ...s, [v]: e.target.checked }))} />
                       ${meta.variants[v]}</label>`)}
                 </div>
-                <button class="primary" style="margin-left:auto" onClick=${doRender}
+                <button class="primary" style="margin-left:auto" onClick=${() => doRender()}
                   disabled=${!!activeJob}>
                   ${dirty ? "Re-render with changes" : "Re-render"}</button>
               </div>`,
@@ -393,7 +530,10 @@ function VideoView({ id }) {
           </table>
         </div>
       </div>
-    </div>`;
+    </div>
+    <${ScriptPanel} videoId=${id}
+      activeScriptJob=${video.jobs.find((j) => j.type === "script_plan" && (j.status === "queued" || j.status === "running"))}
+      onRenderWithScript=${doRender} />`;
 }
 
 // ---------- history ----------

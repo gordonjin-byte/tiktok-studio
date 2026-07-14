@@ -133,5 +133,17 @@ async def render(video_id: str, request: Request):
     variants = [v for v in body.get("variants", list(VARIANTS)) if v in VARIANTS]
     if not variants:
         raise HTTPException(422, "no valid variants")
-    job_id = worker.enqueue(video_id, "render", settings, variants)
+
+    script_id = None
+    if "script_id" in body:
+        script_id = body["script_id"]  # explicit null forces a plain render
+    else:
+        latest = db.query_one(
+            "SELECT id FROM scripts WHERE video_id=? AND status='planned' "
+            "ORDER BY created_at DESC LIMIT 1", (video_id,))
+        script_id = latest["id"] if latest else None
+    if script_id and not db.query_one("SELECT id FROM scripts WHERE id=?", (script_id,)):
+        raise HTTPException(404, "script_id not found")
+
+    job_id = worker.enqueue(video_id, "render", settings, variants, script_id=script_id)
     return {"job_id": job_id}

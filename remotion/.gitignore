@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+.remotion/
+*.mov
+*.mp4
+# per-video bespoke-generated components are runtime artifacts, not source
+src/generated/*
+!src/generated/.gitkeep

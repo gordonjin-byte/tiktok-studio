@@ -3,9 +3,7 @@ highlights, and hook text. Falls back to heuristics so the pipeline never blocks
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 from collections import Counter
 from typing import Optional
 
@@ -13,6 +11,7 @@ from .. import config
 from pydantic import BaseModel
 
 from ..models import BrainResult, HookTexts, KeywordPick, RetakeDecision
+from .claude_cli import extract_json, invoke_claude
 from .transcribe import norm_token
 
 _STOPWORDS = set("""a an and are as at be but by for from has have he her his i if in into is it its
@@ -118,11 +117,11 @@ def _claude_brain(words: list[dict], segments: dict, filename_hint: str) -> Brai
     prompt = _PROMPT + json.dumps(payload, separators=(",", ":"))
     last_err = ""
     for attempt in range(2):
-        text = _invoke_claude(prompt if attempt == 0 else
-                              prompt + f"\n\nYour previous response failed validation: {last_err}\n"
-                                       "Return ONLY the corrected JSON object.")
+        text = invoke_claude(prompt if attempt == 0 else
+                             prompt + f"\n\nYour previous response failed validation: {last_err}\n"
+                                      "Return ONLY the corrected JSON object.")
         try:
-            resp = _ClaudeResponse.model_validate(_extract_json(text))
+            resp = _ClaudeResponse.model_validate(extract_json(text))
             return _to_brain_result(resp, words)
         except Exception as e:
             last_err = str(e)[:500]
@@ -168,37 +167,6 @@ def _to_brain_result(resp: _ClaudeResponse, words: list[dict]) -> BrainResult:
     keywords = [k for k in resp.keywords if 0 <= k.word_index < n]
     return BrainResult(retakes=retakes, keywords=keywords, hooks=resp.hooks,
                        banner_text=resp.banner_text, cta_text=resp.cta_text)
-
-
-def _invoke_claude(prompt: str) -> str:
-    # launchd/Task Scheduler PATH is minimal — make sure the CLI's own dir
-    # (and on macOS, homebrew) are present
-    extra_dirs = [os.path.dirname(config.CLAUDE_CLI)]
-    if not config.IS_WINDOWS:
-        extra_dirs += ["/opt/homebrew/bin", "/usr/bin", "/bin"]
-    env = {**os.environ,
-           "PATH": os.pathsep.join(extra_dirs + [os.environ.get("PATH", "")])}
-    cmd = [config.CLAUDE_CLI, "-p", "--output-format", "json", "--max-turns", "1"]
-    if config.IS_WINDOWS and config.CLAUDE_CLI.lower().endswith((".cmd", ".bat")):
-        cmd = ["cmd", "/c"] + cmd  # npm shims need the shell
-    proc = subprocess.run(
-        cmd, input=prompt, capture_output=True, text=True,
-        timeout=config.CLAUDE_TIMEOUT_S, env=env,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude CLI exit {proc.returncode}: {proc.stderr[-500:]}")
-    wrapper = json.loads(proc.stdout)
-    return wrapper.get("result", "")
-
-
-def _extract_json(text: str) -> dict:
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", text, re.DOTALL)
-        if not m:
-            raise
-        return json.loads(m.group(0))
 
 
 def _fallback_brain(words: list[dict], segments: dict) -> BrainResult:

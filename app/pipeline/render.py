@@ -22,6 +22,21 @@ def render_variant(*, edl: dict, settings: RenderSettings, video_id: str,
     build_ass(edl, settings, ass_path)
 
     music_path = config.MUSIC_DIR / settings.music.track if settings.music.track else None
+
+    # script-driven overlays: resolve cue_id -> rendered alpha clip, silently
+    # dropping any cue whose clip is missing/failed — one bad decorative clip
+    # never blocks the whole video render
+    overlay_dir = config.ARTIFACTS_DIR / video_id / "overlays"
+    overlay_clips = []
+    for ev in edl.get("overlay_events", []):
+        clip_path = overlay_dir / f"{ev['cue_id']}.mov"
+        if clip_path.exists():
+            overlay_clips.append({
+                "cue_id": ev["cue_id"], "start_out": ev["start_out"],
+                "end_out": ev["end_out"], "path": clip_path,
+                "z_index": ev.get("spec", {}).get("z_index", 0),
+            })
+
     script_path = render_dir / "filters.txt"
     meta = build_filter_script(
         edl, settings, script_path,
@@ -29,6 +44,7 @@ def render_variant(*, edl: dict, settings: RenderSettings, video_id: str,
         sfx_whoosh=config.SFX_DIR / "whoosh.wav",
         sfx_pop=config.SFX_DIR / "pop.wav",
         ass_path=ass_path,
+        overlay_clips=overlay_clips,
     )
 
     from .ingest import original_path_for

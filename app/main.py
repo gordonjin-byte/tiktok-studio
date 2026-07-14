@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, db, events, watcher, worker
-from .api import misc, videos
+from .api import misc, scripts, videos
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TikTok Studio", lifespan=lifespan)
 app.include_router(videos.router)
 app.include_router(misc.router)
+app.include_router(scripts.router)
 
 
 @app.get("/")

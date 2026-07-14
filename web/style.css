@@ -100,10 +100,11 @@ button.primary { background: var(--accent); color: #111; border-color: var(--acc
 button.primary:hover { background: #ffdf40; }
 button.danger:hover { border-color: var(--red); color: var(--red); }
 button:disabled { opacity: .45; cursor: default; }
-input[type="text"], select {
+input[type="text"], select, textarea {
   background: var(--bg3); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 13px;
 }
+textarea { width: 100%; resize: vertical; }
 input[type="range"] { accent-color: var(--accent); width: 100%; }
 input[type="color"] {
   width: 34px; height: 26px; border: 1px solid var(--border); border-radius: 6px;
@@ -125,6 +126,10 @@ video.player {
   width: 100%; max-width: 400px; aspect-ratio: 9/16; border-radius: var(--radius);
   background: #000; display: block; margin: 0 auto;
 }
+video.overlay-preview {
+  width: 160px; aspect-ratio: 9/16; border-radius: 8px;
+  background: #000; display: block; margin-bottom: 4px;
+}
 .player-actions { display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
 .badge {
   display: inline-flex; align-items: center; gap: 5px;
@@ -134,6 +139,8 @@ video.player {
 .badge.claude { background: rgba(61,220,132,.12); color: var(--green); }
 .badge.fallback { background: rgba(255,212,0,.1); color: var(--accent); }
 .badge.warn { background: rgba(255,92,92,.12); color: var(--red); }
+.badge.template { background: rgba(61,220,132,.12); color: var(--green); }
+.badge.bespoke { background: rgba(255,212,0,.1); color: var(--accent); }
 
 /* ---- settings panel ---- */
 .settings { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); }

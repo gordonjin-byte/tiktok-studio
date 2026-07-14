@@ -65,10 +65,24 @@ def _subtract_spans(intervals: list[list[float]], drops: list[list[float]]) -> l
     return out
 
 
+def _nearest_kept_out(t: float, audio_segs: list[dict]) -> Optional[float]:
+    """Nearest surviving keep-interval boundary's output time — fallback for
+    an overlay anchor whose source time fell inside a dropped retake span."""
+    best_out, best_dist = None, None
+    for seg in audio_segs:
+        for src_bound, out_bound in ((seg["src0"], seg["out0"]),
+                                     (seg["src1"], seg["out0"] + (seg["src1"] - seg["src0"]))):
+            dist = abs(t - src_bound)
+            if best_dist is None or dist < best_dist:
+                best_dist, best_out = dist, out_bound
+    return best_out
+
+
 def build_edl(*, words: list[dict], energy: dict, brain: BrainResult,
               settings: RenderSettings, source_duration: float,
               variant: str = "hook_a",
-              boundary_padding: Optional[dict[int, float]] = None) -> dict:
+              boundary_padding: Optional[dict[int, float]] = None,
+              overlay_cues: Optional[list[dict]] = None) -> dict:
     """boundary_padding: {interval_index: extra_s} — QC retry widens boundaries."""
     s = settings
     env = energy["db"]
@@ -196,6 +210,27 @@ def build_edl(*, words: list[dict], energy: dict, brain: BrainResult,
 
     cta_start = max(lead_in, total_out - s.overlays.cta_last_seconds) if s.overlays.cta_enabled else None
 
+    # ---- script-driven overlay/effect events (source anchor -> output window) ----
+    overlay_events: list[dict] = []
+    dropped_overlay_events: list[dict] = []
+    for cue in (overlay_cues or []):
+        t = cue["anchor_src_t"]
+        if t is None:
+            dropped_overlay_events.append({"cue_id": cue["cue_id"], "reason": "no source anchor"})
+            continue
+        start_out = src_to_out(t)
+        if start_out is None:
+            start_out = _nearest_kept_out(t, audio_segs)
+        if start_out is None:
+            dropped_overlay_events.append({"cue_id": cue["cue_id"], "reason": "anchor not in any kept interval"})
+            continue
+        end_out = min(start_out + cue["duration_s"], total_out)
+        overlay_events.append({
+            "cue_id": cue["cue_id"], "kind": cue.get("kind", "overlay"),
+            "start_out": round(start_out, 3), "end_out": round(end_out, 3),
+            "spec": cue.get("spec", {}),
+        })
+
     return {
         "variant": variant,
         "lead_in_s": lead_in,
@@ -211,6 +246,8 @@ def build_edl(*, words: list[dict], energy: dict, brain: BrainResult,
         "banner_text": (settings.overlays.banner_text.strip() or brain.banner_text),
         "cta_text": (settings.overlays.cta_text.strip() or brain.cta_text),
         "hook_texts": brain.hooks.model_dump(),
+        "overlay_events": overlay_events,
+        "dropped_overlay_events": dropped_overlay_events,
     }
 
 

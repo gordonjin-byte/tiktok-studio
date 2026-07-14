@@ -51,6 +51,18 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
     Write-Host "   Install Claude Code for Windows and sign in, then restart the server."
 }
 
+Write-Host "-> node / remotion (script-driven overlays)"
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Host "   installing Node.js LTS via winget..."
+    winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+    Write-Host "   NOTE: restart this PowerShell window if node is still not found (PATH refresh)."
+}
+Push-Location (Join-Path $AppDir "remotion")
+npm ci --no-fund --no-audit
+npx remotion browser ensure
+npm run catalog:build
+Pop-Location
+
 Write-Host "-> seed sfx/music"
 if (-not (Test-Path (Join-Path $DataDir "sfx\whoosh.wav"))) {
     & "$AppDir\.venv\Scripts\python.exe" "$AppDir\scripts\seed_assets.py" (Join-Path $DataDir "sfx") (Join-Path $DataDir "music")

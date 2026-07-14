@@ -1,0 +1,892 @@
+{
+  "catalog_version": "b47f443f8842",
+  "templates": [
+    {
+      "id": "banner-sweep-text",
+      "title": "Banner Sweep Text",
+      "category": "banner",
+      "applicable_cue_types": [
+        "overlay",
+        "on_screen"
+      ],
+      "description": "A banner bar that sweeps in from an edge carrying a headline (and optional subtext/icon). Good for section headers or key-point call-outs.",
+      "match_hints": [
+        "headline",
+        "section title",
+        "key point",
+        "banner",
+        "announcement",
+        "new section"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "subtext": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "sweepDirection": {
+            "default": "left",
+            "type": "string",
+            "enum": [
+              "left",
+              "right",
+              "top",
+              "bottom"
+            ]
+          },
+          "bgColor": {
+            "default": "#111318",
+            "type": "string"
+          },
+          "textColor": {
+            "default": "#ffffff",
+            "type": "string"
+          },
+          "icon": {
+            "type": "string",
+            "maxLength": 8
+          }
+        },
+        "required": [
+          "text",
+          "sweepDirection",
+          "bgColor",
+          "textColor"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 2.5,
+      "is_fallback": false
+    },
+    {
+      "id": "punch-zoom-callout",
+      "title": "Punch Zoom Callout",
+      "category": "emphasis",
+      "applicable_cue_types": [
+        "effect",
+        "overlay"
+      ],
+      "description": "A punchy scale-in burst with an optional trigger label, for emphasizing a single beat/word/reaction moment.",
+      "match_hints": [
+        "emphasis",
+        "punch",
+        "bam",
+        "reaction",
+        "impact",
+        "sudden",
+        "surprise"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "punchScale": {
+            "default": 1.4,
+            "type": "number",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "triggerLabel": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "shake": {
+            "default": true,
+            "type": "boolean"
+          },
+          "accentColor": {
+            "default": "#ff3355",
+            "type": "string"
+          }
+        },
+        "required": [
+          "punchScale",
+          "shake",
+          "accentColor"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "fixed",
+      "default_duration_s": 1,
+      "is_fallback": false
+    },
+    {
+      "id": "flash-glitch-word",
+      "title": "Flash Glitch Word",
+      "category": "effect",
+      "applicable_cue_types": [
+        "effect"
+      ],
+      "description": "A brief full-screen glitch/flash takeover of a single word or short phrase — for hacking/breach/error/danger beats.",
+      "match_hints": [
+        "glitch",
+        "hack",
+        "breach",
+        "error",
+        "corrupt",
+        "danger",
+        "warning flash",
+        "cut"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "default": "GLITCH",
+            "type": "string",
+            "maxLength": 40
+          },
+          "flashColor": {
+            "default": "#00ffe0",
+            "type": "string"
+          },
+          "glitchIntensity": {
+            "default": "med",
+            "type": "string",
+            "enum": [
+              "low",
+              "med",
+              "high"
+            ]
+          }
+        },
+        "required": [
+          "text",
+          "flashColor",
+          "glitchIntensity"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "fixed",
+      "default_duration_s": 0.6,
+      "is_fallback": false
+    },
+    {
+      "id": "icon-emoji-drop-transform",
+      "title": "Icon/Emoji Drop Transform",
+      "category": "transform",
+      "applicable_cue_types": [
+        "overlay",
+        "effect"
+      ],
+      "description": "An icon drops in, then morphs/blends/grinds into a second icon or short text — good for 'X becomes Y' explanations (e.g. password -> hash).",
+      "match_hints": [
+        "transform",
+        "becomes",
+        "turns into",
+        "hash",
+        "encrypt",
+        "convert",
+        "process",
+        "pipeline step"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "fromIcon": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8
+          },
+          "toIcon": {
+            "type": "string",
+            "maxLength": 8
+          },
+          "toText": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "transformStyle": {
+            "default": "morph",
+            "type": "string",
+            "enum": [
+              "morph",
+              "blend",
+              "grind"
+            ]
+          },
+          "labelBefore": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "labelAfter": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "fromIcon",
+          "transformStyle"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 2.2,
+      "is_fallback": false
+    },
+    {
+      "id": "split-screen-compare",
+      "title": "Split Screen Compare",
+      "category": "compare",
+      "applicable_cue_types": [
+        "overlay"
+      ],
+      "description": "Two labeled columns (with icon + status lines each) side by side, for direct A vs B comparisons (e.g. rainbow table vs. salted hash).",
+      "match_hints": [
+        "compare",
+        "versus",
+        "vs",
+        "before and after",
+        "difference",
+        "pros and cons",
+        "good vs bad"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "leftLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "leftIcon": {
+            "default": "❌",
+            "type": "string",
+            "maxLength": 8
+          },
+          "leftStatus": {
+            "minItems": 1,
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 60
+            }
+          },
+          "rightLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "rightIcon": {
+            "default": "✅",
+            "type": "string",
+            "maxLength": 8
+          },
+          "rightStatus": {
+            "minItems": 1,
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 60
+            }
+          }
+        },
+        "required": [
+          "leftLabel",
+          "leftIcon",
+          "leftStatus",
+          "rightLabel",
+          "rightIcon",
+          "rightStatus"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 3.5,
+      "is_fallback": false
+    },
+    {
+      "id": "mockup-card-with-stamp",
+      "title": "Mockup Card with Stamp",
+      "category": "mockup",
+      "applicable_cue_types": [
+        "overlay"
+      ],
+      "description": "A fake email/chat/browser/app UI card with a headline and body text, stamped with a big X/check/custom mark — for 'this is what it looks like' or pass/fail moments.",
+      "match_hints": [
+        "email",
+        "message",
+        "screenshot",
+        "example",
+        "mockup",
+        "ui",
+        "rejected",
+        "approved",
+        "invalid"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "mockupType": {
+            "default": "email",
+            "type": "string",
+            "enum": [
+              "email",
+              "chat",
+              "browser",
+              "app"
+            ]
+          },
+          "headline": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "bodyText": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "stampType": {
+            "default": "x",
+            "type": "string",
+            "enum": [
+              "x",
+              "check",
+              "custom"
+            ]
+          },
+          "stampText": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "stampColor": {
+            "default": "#ff3355",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mockupType",
+          "headline",
+          "stampType",
+          "stampColor"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 3,
+      "is_fallback": false
+    },
+    {
+      "id": "lower-third-label",
+      "title": "Lower Third Label",
+      "category": "label",
+      "applicable_cue_types": [
+        "on_screen",
+        "overlay"
+      ],
+      "description": "A classic broadcast-style lower/upper third label with an accent bar — for naming a term, tool, or speaker context.",
+      "match_hints": [
+        "label",
+        "term",
+        "definition",
+        "name this",
+        "lower third",
+        "caption tag"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "sublabel": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "accentColor": {
+            "default": "#3fa9ff",
+            "type": "string"
+          },
+          "position": {
+            "default": "bottom",
+            "type": "string",
+            "enum": [
+              "top",
+              "bottom"
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "accentColor",
+          "position"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 2.5,
+      "is_fallback": false
+    },
+    {
+      "id": "animated-diagram-arrow",
+      "title": "Animated Diagram Arrow",
+      "category": "diagram",
+      "applicable_cue_types": [
+        "overlay"
+      ],
+      "description": "Two labeled nodes connected by an animated drawing-in arrow — for explaining a flow/pipeline step ('A leads to B').",
+      "match_hints": [
+        "flow",
+        "pipeline",
+        "leads to",
+        "then",
+        "next step",
+        "arrow",
+        "diagram",
+        "architecture"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "fromLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "toLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "arrowStyle": {
+            "default": "straight",
+            "type": "string",
+            "enum": [
+              "straight",
+              "curved",
+              "dashed"
+            ]
+          },
+          "direction": {
+            "default": "ltr",
+            "type": "string",
+            "enum": [
+              "ltr",
+              "rtl",
+              "up",
+              "down"
+            ]
+          }
+        },
+        "required": [
+          "fromLabel",
+          "toLabel",
+          "arrowStyle",
+          "direction"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 2.5,
+      "is_fallback": false
+    },
+    {
+      "id": "table-list-reveal",
+      "title": "Table/List Reveal",
+      "category": "list",
+      "applicable_cue_types": [
+        "overlay",
+        "on_screen"
+      ],
+      "description": "A card with a title and a list of items that reveal one-by-one (staggered or typewriter) — for enumerating steps, ingredients, or a checklist of facts.",
+      "match_hints": [
+        "list",
+        "steps",
+        "items",
+        "here are",
+        "enumerate",
+        "bullet points",
+        "table"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "items": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "rows": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "revealStyle": {
+            "default": "stagger",
+            "type": "string",
+            "enum": [
+              "stagger",
+              "typewriter"
+            ]
+          },
+          "highlightIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "revealStyle"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 3.5,
+      "is_fallback": false
+    },
+    {
+      "id": "progress-checklist",
+      "title": "Progress Checklist",
+      "category": "list",
+      "applicable_cue_types": [
+        "overlay"
+      ],
+      "description": "A vertical checklist with a highlighted active item and check-marked completed items — for showing progress through a multi-step process live.",
+      "match_hints": [
+        "checklist",
+        "progress",
+        "step by step",
+        "done",
+        "complete",
+        "in progress",
+        "todo"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 70
+            }
+          },
+          "activeIndex": {
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "completedIndices": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "required": [
+          "items",
+          "activeIndex",
+          "completedIndices"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 3.5,
+      "is_fallback": false
+    },
+    {
+      "id": "quote-card",
+      "title": "Quote Card",
+      "category": "quote",
+      "applicable_cue_types": [
+        "on_screen",
+        "overlay"
+      ],
+      "description": "A full-screen bold/minimal quote takeover with optional attribution — for a memorable line or callout worth pausing on.",
+      "match_hints": [
+        "quote",
+        "memorable line",
+        "said",
+        "as they say",
+        "famous line",
+        "takeaway"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 220
+          },
+          "attribution": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "style": {
+            "default": "bold",
+            "type": "string",
+            "enum": [
+              "bold",
+              "minimal"
+            ]
+          },
+          "bgColor": {
+            "default": "#0d0f12",
+            "type": "string"
+          },
+          "textColor": {
+            "default": "#ffffff",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "style",
+          "bgColor",
+          "textColor"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 3,
+      "is_fallback": false
+    },
+    {
+      "id": "warning-banner",
+      "title": "Warning Banner",
+      "category": "banner",
+      "applicable_cue_types": [
+        "overlay",
+        "on_screen"
+      ],
+      "description": "A top banner with severity coloring (info/warning/danger) and an optional pulsing glow — for calling out a risk, gotcha, or important caveat.",
+      "match_hints": [
+        "warning",
+        "careful",
+        "gotcha",
+        "caution",
+        "risk",
+        "important",
+        "note",
+        "danger"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "severity": {
+            "default": "warning",
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "danger"
+            ]
+          },
+          "icon": {
+            "default": "⚠️",
+            "type": "string",
+            "maxLength": 8
+          },
+          "pulsing": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "severity",
+          "icon",
+          "pulsing"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 2.5,
+      "is_fallback": false
+    },
+    {
+      "id": "before-after-toggle",
+      "title": "Before/After Toggle",
+      "category": "compare",
+      "applicable_cue_types": [
+        "overlay"
+      ],
+      "description": "A single card that toggles from a 'before' state to an 'after' state mid-clip (wipe/crossfade/flip) — for a single-subject transformation.",
+      "match_hints": [
+        "before and after",
+        "used to be",
+        "now it's",
+        "upgrade",
+        "transformation",
+        "toggle"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "beforeLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "beforeIcon": {
+            "type": "string",
+            "maxLength": 8
+          },
+          "beforeText": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "afterLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "afterIcon": {
+            "type": "string",
+            "maxLength": 8
+          },
+          "afterText": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "toggleStyle": {
+            "default": "crossfade",
+            "type": "string",
+            "enum": [
+              "wipe",
+              "crossfade",
+              "flip"
+            ]
+          }
+        },
+        "required": [
+          "beforeLabel",
+          "afterLabel",
+          "toggleStyle"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 3,
+      "is_fallback": false
+    },
+    {
+      "id": "counter-stat-tickup",
+      "title": "Counter Stat Tick-up",
+      "category": "stat",
+      "applicable_cue_types": [
+        "overlay",
+        "on_screen"
+      ],
+      "description": "A big number that ticks up from one value to another with a label — for statistics, benchmarks, or dramatic numeric reveals.",
+      "match_hints": [
+        "number",
+        "statistic",
+        "percent",
+        "benchmark",
+        "times faster",
+        "count",
+        "metric"
+      ],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "fromValue": {
+            "default": 0,
+            "type": "number"
+          },
+          "toValue": {
+            "type": "number"
+          },
+          "prefix": {
+            "type": "string",
+            "maxLength": 10
+          },
+          "suffix": {
+            "type": "string",
+            "maxLength": 10
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 60
+          }
+        },
+        "required": [
+          "fromValue",
+          "toValue",
+          "label"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 2.5,
+      "is_fallback": false
+    },
+    {
+      "id": "generic-caption-card",
+      "title": "Generic Caption Card",
+      "category": "fallback",
+      "applicable_cue_types": [
+        "on_screen",
+        "overlay",
+        "effect"
+      ],
+      "description": "Universal fallback: a minimal centered text card. Always valid given just a string — used whenever no other template or bespoke component fits.",
+      "match_hints": [],
+      "props_schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 280
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "duration_mode": "flexible",
+      "default_duration_s": 2,
+      "is_fallback": true
+    }
+  ]
+}
