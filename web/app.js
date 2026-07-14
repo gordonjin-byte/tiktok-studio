@@ -263,6 +263,7 @@ const CUE_TYPE_LABEL = { on_screen: "on-screen", overlay: "overlay", effect: "ef
 function CueRow({ cue, videoId, onOverride, onRetry }) {
   const [editing, setEditing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [showWhy, setShowWhy] = useState(false);
   const [brief, setBrief] = useState(cue.bespoke_brief || "");
 
   const badge = cue.decision_status === "bespoke_failed"
@@ -273,21 +274,49 @@ function CueRow({ cue, videoId, onOverride, onRetry }) {
         ? html`<span class="badge template">${cue.template_id || "template"}</span>`
         : html`<span class="badge fallback">pending</span>`;
 
+  const qc = cue.visual_qc_report;
+  const qcBadge = cue.visual_qc_status === "pass"
+    ? html`<span class="badge claude" title="Visual QC passed">✓ QC</span>`
+    : cue.visual_qc_status === "failed"
+      ? html`<span class="badge warn" title=${qc?.problem || "visual QC failed"}>⚠ QC failed</span>`
+      : cue.visual_qc_status === "skipped"
+        ? html`<span class="badge fallback" title=${qc?.error || "visual QC skipped"}>QC skipped</span>`
+        : null;
+
+  const hasWhy = cue.decision_reason || qc;
+
   return html`
     <tr>
       <td class="muted">${CUE_TYPE_LABEL[cue.cue_type] || cue.cue_type}</td>
       <td>${cue.source_text}</td>
-      <td>${badge}${cue.user_overridden ? html` <span class="muted small">(edited)</span>` : ""}
+      <td>${badge} ${qcBadge}${cue.user_overridden ? html` <span class="muted small">(edited)</span>` : ""}
         ${cue.render_error && html`<div class="muted small" style="color:var(--red)">render failed: ${cue.render_error.slice(0, 120)}</div>`}
       </td>
       <td>
         ${cue.has_preview && html`
           <button class="small" onClick=${() => setShowPreview((s) => !s)}>${showPreview ? "hide" : "preview"}</button>`}
+        ${hasWhy && html`
+          <button class="small" onClick=${() => setShowWhy((s) => !s)}>why?</button>`}
         ${cue.decision_status === "bespoke_failed" && html`
           <button class="small" onClick=${() => onRetry(cue.id)}>retry</button>`}
         <button class="small" onClick=${() => setEditing((e) => !e)}>edit</button>
       </td>
     </tr>
+    ${showWhy && hasWhy && html`
+      <tr>
+        <td></td>
+        <td colspan="3">
+          ${cue.decision_reason && html`
+            <div class="muted small">advisor: ${cue.decision_reason}
+              ${cue.decision_kind === "template" && cue.advisor_confidence != null &&
+                html` · confidence ${Math.round(cue.advisor_confidence * 100)}%`}</div>`}
+          ${qc && html`
+            <div class="muted small" style=${qc.verdict === "fail" ? "color:var(--red)" : ""}>
+              visual QC: ${qc.problem || (qc.verdict === "pass" ? "looks correct" : qc.error)}
+              ${qc.suggestion && html` — suggested fix: ${qc.suggestion}`}
+            </div>`}
+        </td>
+      </tr>`}
     ${showPreview && cue.has_preview && html`
       <tr>
         <td></td>

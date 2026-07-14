@@ -15,7 +15,8 @@ from typing import Callable, Optional
 from .. import config
 from ..models import BrainResult, RenderSettings
 from . import (audio_analysis, bespoke_codegen, brain, edl as edl_mod, ingest,
-              overlay_advisor, overlay_catalog, qc, render, script_align, segments, transcribe)
+              overlay_advisor, overlay_catalog, overlay_qc, overlays, qc, render,
+              script_align, segments, transcribe)
 from .ffmpeg import ProcHolder
 from .script_parse import ScriptDoc
 
@@ -23,6 +24,9 @@ ProgressFn = Callable[[str, float, str], None]  # (stage, stage_progress 0..1, m
 
 QC_MAX_RETRIES = 2
 QC_WIDEN_S = 0.08
+# each escalation costs a full bespoke-codegen cycle + a re-render + a second
+# vision call — real time and money, stay conservative
+VISUAL_QC_MAX_ESCALATIONS = 1
 
 
 def _noop(stage: str, p: float, msg: str = "") -> None:
@@ -139,15 +143,31 @@ def run_script_plan(video_id: str, script_id: str, analysis: dict,
     progress("align", 0.0, "aligning script to real transcript")
     alignment = script_align.align_script(analysis["words"], analysis["segments"], brain_result, script_doc)
     aligned_by_index = {c.index: c for c in alignment.cues}
+    aligned_lines_by_index = {l.index: l for l in alignment.lines}
+    available_by_index = script_align.cue_available_durations(alignment)
+
+    def _line_window_for_cue(cue_index: int) -> tuple[Optional[float], Optional[float]]:
+        a = aligned_by_index.get(cue_index)
+        line = aligned_lines_by_index.get(a.anchor_line_index) if (a and a.anchor_line_index is not None) else None
+        return (line.t0, line.t1) if (line and line.matched) else (None, None)
 
     cue_rows = db.query("SELECT * FROM script_cues WHERE script_id=? ORDER BY cue_index", (script_id,))
     est_overlay_cues = [
-        {"cue_id": row["id"], "kind": row["cue_type"],
-         "anchor_src_t": aligned_by_index[row["cue_index"]].anchor_src_t, "duration_s": 1.0, "spec": {}}
+        {
+            "cue_id": row["id"], "kind": row["cue_type"],
+            "anchor_src_t": aligned_by_index[row["cue_index"]].anchor_src_t,
+            "duration_s": available_by_index.get(row["cue_index"], script_align.DEFAULT_AVAILABLE_DURATION_S),
+            "spec": {},
+            "line_src_t0": _line_window_for_cue(row["cue_index"])[0],
+            "line_src_t1": _line_window_for_cue(row["cue_index"])[1],
+        }
         for row in cue_rows if row["cue_index"] in aligned_by_index
     ]
-    # best-effort output-time estimate for the UI/advisor context only — the
-    # authoritative mapping is recomputed per-variant inside the real render
+    # real-duration output-time estimate for the UI/advisor context — uses the
+    # SAME available_duration_s computed from genuine aligned-line data that the
+    # advisor sees below, and the SAME caption-snapping logic build_edl applies
+    # for the real render, so this estimate no longer diverges from what
+    # actually gets rendered
     est_edl = edl_mod.build_edl(
         words=analysis["words"], energy=analysis["energy"], brain=brain_result,
         settings=RenderSettings(), source_duration=video_row["duration_s"] or 0.0,
@@ -157,9 +177,12 @@ def run_script_plan(video_id: str, script_id: str, analysis: dict,
     for row in cue_rows:
         a = aligned_by_index.get(row["cue_index"])
         est = est_by_cue_id.get(row["id"])
+        line_t0, line_t1 = _line_window_for_cue(row["cue_index"])
         db.update("script_cues", row["id"], {
             "anchor_src_t": a.anchor_src_t if a else None,
             "match_confidence": a.confidence if a else 0.0,
+            "line_src_t0": line_t0,
+            "line_src_t1": line_t1,
             "resolved_out_t0_s": est["start_out"] if est else None,
             "resolved_out_t1_s": est["end_out"] if est else None,
             "updated_at": db.now(),
@@ -185,8 +208,7 @@ def run_script_plan(video_id: str, script_id: str, analysis: dict,
         if row["advisor_checksum"] == checksum and (
                 row["user_overridden"] or row["decision_status"] in ("decided", "bespoke_ready", "bespoke_failed")):
             continue  # cached decision still valid — skip re-asking the advisor
-        t0, t1 = row["resolved_out_t0_s"], row["resolved_out_t1_s"]
-        available = max(0.4, t1 - t0) if (t0 is not None and t1 is not None) else 2.0
+        available = available_by_index.get(row["cue_index"], script_align.DEFAULT_AVAILABLE_DURATION_S)
         advisor_inputs.append(overlay_advisor.CueInput(
             cue_id=row["id"], cue_type=row["cue_type"], source_text=row["source_text"],
             nearby_dialogue=nearby, available_duration_s=available))
@@ -203,6 +225,7 @@ def run_script_plan(video_id: str, script_id: str, analysis: dict,
             "template_props_json": json.dumps(d.props),
             "bespoke_brief": d.bespoke_brief, "duration_s": d.duration_s,
             "advisor_checksum": checksum_by_cue[row["id"]], "advisor_status": d.advisor_status,
+            "decision_reason": d.reason, "advisor_confidence": d.advisor_confidence,
             "decision_status": status, "updated_at": db.now(),
         })
         publish_cue(row["id"], status)
@@ -230,6 +253,149 @@ def run_script_plan(video_id: str, script_id: str, analysis: dict,
         progress("codegen", (i + 1) / max(1, len(bespoke_rows)), f"{i + 1}/{len(bespoke_rows)}")
 
     db.update("scripts", script_id, {"status": "planned", "updated_at": db.now()})
+
+
+def _expected_description(row: dict) -> str:
+    # bespoke_brief is more concrete/visual than source_text when present
+    # (overlay_advisor's bespoke path already asked Claude to write a
+    # concrete visual brief) — prefer it, fall back to the raw authored cue text.
+    return (row.get("bespoke_brief") or "").strip() or row["source_text"]
+
+
+def run_overlay_qc_stage(video_id: str, script_id: str, episode_meta: dict,
+                         holder: Optional[ProcHolder] = None,
+                         progress: ProgressFn = _noop) -> dict:
+    """Visually QCs every renderable cue, skipping ones whose manifest
+    spec_hash is unchanged since a prior terminal (pass/failed) QC result.
+    Never raises for a per-cue failure — the video always finishes rendering."""
+    from .. import db, events
+
+    rows = db.query(
+        "SELECT * FROM script_cues WHERE script_id=? AND decision_status IN "
+        "('decided','bespoke_ready','bespoke_failed') ORDER BY cue_index", (script_id,))
+    manifest = overlays.get_manifest(video_id)
+    n_checked = n_skipped = n_escalated = n_failed = 0
+
+    for i, row in enumerate(rows):
+        progress("visual_qc", i / max(1, len(rows)), f"checking overlay {i + 1}/{len(rows)}")
+        try:
+            entry = manifest.get(row["id"], {})
+            clip_path = config.ARTIFACTS_DIR / video_id / "overlays" / f"{row['id']}.mov"
+            if "error" in entry or not clip_path.exists():
+                continue  # no clip to check — a Remotion-level render failure, a separate axis
+            spec_hash = entry.get("spec_hash")
+            if spec_hash and row.get("visual_qc_spec_hash") == spec_hash \
+                    and row.get("visual_qc_status") in ("pass", "failed"):
+                n_skipped += 1
+                continue
+
+            report = overlay_qc.run_overlay_visual_qc(
+                video_id=video_id, cue_id=row["id"], expected_description=_expected_description(row),
+                duration_s=row.get("duration_s") or 2.0, holder=holder)
+            n_checked += 1
+            result = _apply_qc_result(video_id, script_id, row, report, spec_hash, episode_meta,
+                                      attempt=0, holder=holder)
+            if result.get("visual_qc_status") == "failed":
+                n_failed += 1
+            if result.get("_escalated"):
+                n_escalated += 1
+            events.publish("cue_update", {
+                "video_id": video_id, "script_id": script_id, "cue_id": row["id"],
+                "decision_status": result.get("decision_status"),
+                "visual_qc_status": result.get("visual_qc_status")})
+        except Exception:
+            continue  # never let one cue's QC blow up the whole stage
+    progress("visual_qc", 1.0, f"visual QC: {n_checked} checked, {n_skipped} cached, "
+                              f"{n_escalated} escalated, {n_failed} failed")
+    return {"checked": n_checked, "skipped": n_skipped, "escalated": n_escalated, "failed": n_failed}
+
+
+def _apply_qc_result(video_id: str, script_id: str, row: dict, report: dict,
+                     spec_hash: Optional[str], episode_meta: dict,
+                     attempt: int, holder: Optional[ProcHolder]) -> dict:
+    from .. import db
+
+    if not report["checked"]:
+        db.update("script_cues", row["id"], {
+            "visual_qc_status": "skipped", "visual_qc_report": json.dumps(report),
+            "updated_at": db.now()})
+        return {**row, "visual_qc_status": "skipped"}
+
+    if report["verdict"] == "pass":
+        db.update("script_cues", row["id"], {
+            "visual_qc_status": "pass", "visual_qc_report": json.dumps(report),
+            "visual_qc_spec_hash": spec_hash, "updated_at": db.now()})
+        return {**row, "visual_qc_status": "pass"}
+
+    def _degrade_to_fallback(reason_report: dict) -> None:
+        db.update("script_cues", row["id"], {
+            "decision_kind": "template", "template_id": overlay_catalog.fallback_template_id(),
+            "template_props_json": json.dumps({"text": row["source_text"][:200]}),
+            "visual_qc_status": "failed", "visual_qc_report": json.dumps(reason_report),
+            "updated_at": db.now()})
+        _rerender_one(video_id, row["id"], holder=holder)
+        # the fallback clip has a DIFFERENT spec_hash than whatever was being
+        # checked when this failure was decided — capture it now so the next
+        # render's cache check (spec_hash == visual_qc_spec_hash) actually
+        # matches and this terminal "failed" cue is never re-billed for
+        # another vision check just because it degraded.
+        fresh_hash = overlays.get_manifest(video_id).get(row["id"], {}).get("spec_hash")
+        if fresh_hash:
+            db.update("script_cues", row["id"], {"visual_qc_spec_hash": fresh_hash, "updated_at": db.now()})
+
+    if attempt >= VISUAL_QC_MAX_ESCALATIONS:
+        _degrade_to_fallback(report)
+        return {**row, "visual_qc_status": "failed", "decision_kind": "template"}
+
+    # a template render is deterministic (same template+props always renders
+    # identically) — retrying the SAME template is pointless, escalate to
+    # bespoke, seeded with the QC's own corrective feedback
+    if row["decision_kind"] == "template":
+        brief = (f"{row['source_text']}\n\n"
+                f"(A previous automatic attempt used a generic template that "
+                f"didn't match: {report['problem']} {report['suggestion']})")
+    else:
+        brief = (row.get("bespoke_brief") or row["source_text"]) + (
+            f"\n\n(A previous generated version had this problem: "
+            f"{report['problem']} Fix: {report['suggestion']})")
+
+    ok, module_path, error = bespoke_codegen.generate(video_id, row["id"], brief, episode_meta)
+    if not ok:
+        db.update("script_cues", row["id"], {"bespoke_error": error[:2000],
+                  "decision_status": "bespoke_failed", "updated_at": db.now()})
+        _degrade_to_fallback(report)
+        return {**row, "visual_qc_status": "failed", "decision_kind": "template"}
+
+    db.update("script_cues", row["id"], {
+        "decision_kind": "bespoke", "template_id": None, "template_props_json": "{}",
+        "bespoke_brief": brief, "bespoke_module_path": module_path, "bespoke_error": None,
+        "decision_status": "bespoke_ready", "updated_at": db.now()})
+    _rerender_one(video_id, row["id"], holder=holder)
+
+    fresh_row = db.query_one("SELECT * FROM script_cues WHERE id=?", (row["id"],))
+    fresh_entry = overlays.get_manifest(video_id).get(row["id"], {})
+    if "error" in fresh_entry:
+        db.update("script_cues", row["id"], {
+            "visual_qc_status": "skipped", "visual_qc_report": json.dumps(report),
+            "updated_at": db.now()})
+        return {**fresh_row, "visual_qc_status": "skipped", "_escalated": True}
+
+    new_report = overlay_qc.run_overlay_visual_qc(
+        video_id=video_id, cue_id=row["id"], expected_description=_expected_description(fresh_row),
+        duration_s=fresh_row.get("duration_s") or 2.0, holder=holder)
+    result = _apply_qc_result(video_id, script_id, fresh_row, new_report,
+                              fresh_entry.get("spec_hash"), episode_meta,
+                              attempt=attempt + 1, holder=holder)
+    result["_escalated"] = True
+    return result
+
+
+def _rerender_one(video_id: str, cue_id: str, holder: Optional[ProcHolder] = None) -> None:
+    from .. import db
+    row = db.query_one("SELECT * FROM script_cues WHERE id=?", (cue_id,))
+    specs = overlay_advisor.to_cue_render_specs([row])
+    if specs:
+        overlays.render_overlay_batch(video_id, specs, holder=holder)
 
 
 def run_render_variant(*, video_id: str, render_id: str, variant: str,

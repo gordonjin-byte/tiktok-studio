@@ -22,7 +22,7 @@ _holders: dict[str, ProcHolder] = {}  # job_id → holder (for cancel)
 
 # stage weights for overall progress ("full"/"render"/"analyze" jobs)
 _WEIGHTS = [("ingest", 4), ("transcribe", 15), ("analyze", 5), ("brain", 6),
-            ("render_overlays", 10),
+            ("render_overlays", 10), ("visual_qc", 8),
             ("render:hook_a", 16), ("render:hook_b", 16), ("render:hook_c", 16),
             ("qc", 8), ("package", 2)]
 # stage weights for "script_plan" jobs (parse already ran in the API layer)
@@ -176,9 +176,25 @@ def _run_job(job: dict, holder: ProcHolder) -> None:
             overlay_result = overlays.render_overlay_batch(video_id, cue_specs, holder=holder)
             n_ready = len(overlay_result["rendered"]) + len(overlay_result["skipped"])
             progress("render_overlays", 1.0, f"{n_ready}/{len(cue_specs)} overlay(s) ready")
+
+            script_row = db.query_one("SELECT * FROM scripts WHERE id=?", (script_id,))
+            episode_meta = {
+                "title": script_row["episode_title"] or "", "category": script_row["episode_category"] or "",
+                "difficulty": script_row["episode_difficulty"] or "", "builds": script_row["builds_text"] or "",
+                "new_piece": script_row["new_piece_text"] or "",
+            }
+            progress("visual_qc", 0.0, "checking overlay clips visually")
+            pipeline.run_overlay_qc_stage(video_id, script_id, episode_meta, holder=holder, progress=progress)
+
+            # escalation above may have changed decision_kind/template_id/
+            # bespoke_module_path/duration_s for some rows — re-query fresh
+            # before building overlay_clips/fingerprint
+            script_cue_rows = db.query(
+                "SELECT * FROM script_cues WHERE script_id=? ORDER BY cue_index", (script_id,))
             overlay_clips = [
                 {"cue_id": r["id"], "kind": r["cue_type"], "anchor_src_t": r["anchor_src_t"],
-                 "duration_s": r["duration_s"], "spec": {}}
+                 "duration_s": r["duration_s"], "spec": {},
+                 "line_src_t0": r["line_src_t0"], "line_src_t1": r["line_src_t1"]}
                 for r in script_cue_rows
                 if r["anchor_src_t"] is not None
                 and r["decision_status"] in ("decided", "bespoke_ready", "bespoke_failed")

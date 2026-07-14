@@ -78,6 +78,30 @@ def _nearest_kept_out(t: float, audio_segs: list[dict]) -> Optional[float]:
     return best_out
 
 
+MIN_OVERLAY_ON_SCREEN_S = 0.4
+
+
+def _caption_span_for_line(chunks: list[dict], line_out_t0: Optional[float],
+                           line_out_t1: Optional[float], start_out: float) -> Optional[tuple[float, float]]:
+    """Given a cue's already-resolved start_out and its aligned dialogue line's
+    window mapped into OUTPUT time, find the caption-chunk span covering that
+    line: from the chunk containing (or immediately following) the anchor,
+    through the last chunk of the line. Returns None if there's nothing to
+    snap to (unmatched line, anchor/line fell entirely outside kept audio, no
+    overlapping chunks) — callers must degrade to the un-snapped window."""
+    if line_out_t0 is None or line_out_t1 is None or line_out_t1 <= line_out_t0:
+        return None
+    line_chunks = [c for c in chunks if c["t0"] < line_out_t1 - 1e-3 and c["t1"] > line_out_t0 + 1e-3]
+    if not line_chunks:
+        return None
+    anchor_chunk = next((c for c in line_chunks if c["t1"] > start_out), line_chunks[-1])
+    span_start = anchor_chunk["t0"]
+    span_end = line_chunks[-1]["t1"]
+    if span_end <= span_start:
+        return None
+    return span_start, span_end
+
+
 def build_edl(*, words: list[dict], energy: dict, brain: BrainResult,
               settings: RenderSettings, source_duration: float,
               variant: str = "hook_a",
@@ -224,7 +248,24 @@ def build_edl(*, words: list[dict], energy: dict, brain: BrainResult,
         if start_out is None:
             dropped_overlay_events.append({"cue_id": cue["cue_id"], "reason": "anchor not in any kept interval"})
             continue
+
         end_out = min(start_out + cue["duration_s"], total_out)
+
+        # snap to the caption-chunk span of the cue's aligned line, if
+        # resolvable — a pure refinement on top of the already-resolved
+        # start_out; drop-span relocation above always runs first and takes
+        # precedence, this step only adjusts within whatever start_out that
+        # produced
+        line_src_t0, line_src_t1 = cue.get("line_src_t0"), cue.get("line_src_t1")
+        line_out_t0 = src_to_out(line_src_t0) if line_src_t0 is not None else None
+        line_out_t1 = src_to_out(line_src_t1) if line_src_t1 is not None else None
+        span = _caption_span_for_line(chunks, line_out_t0, line_out_t1, start_out)
+        if span is not None:
+            snapped_start, snapped_line_end = span
+            snapped_end = min(snapped_line_end, snapped_start + cue["duration_s"])
+            snapped_end = max(snapped_end, snapped_start + MIN_OVERLAY_ON_SCREEN_S)
+            start_out, end_out = snapped_start, min(snapped_end, total_out)
+
         overlay_events.append({
             "cue_id": cue["cue_id"], "kind": cue.get("kind", "overlay"),
             "start_out": round(start_out, 3), "end_out": round(end_out, 3),

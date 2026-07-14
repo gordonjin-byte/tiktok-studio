@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS script_cues (
   source_text TEXT NOT NULL,
   script_time_s REAL,
   anchor_src_t REAL,
+  line_src_t0 REAL, line_src_t1 REAL,
   resolved_out_t0_s REAL, resolved_out_t1_s REAL,
   match_confidence REAL,
   decision_status TEXT NOT NULL DEFAULT 'pending',
@@ -85,6 +86,9 @@ CREATE TABLE IF NOT EXISTS script_cues (
   bespoke_brief TEXT, bespoke_module_path TEXT, bespoke_error TEXT,
   duration_s REAL,
   advisor_checksum TEXT, advisor_status TEXT NOT NULL DEFAULT 'none',
+  decision_reason TEXT, advisor_confidence REAL,
+  visual_qc_status TEXT NOT NULL DEFAULT 'none',
+  visual_qc_report TEXT, visual_qc_spec_hash TEXT,
   user_overridden INTEGER NOT NULL DEFAULT 0,
   error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -145,6 +149,13 @@ def get_conn() -> sqlite3.Connection:
                 conn.executescript(_SCHEMA)
                 _ensure_column(conn, "jobs", "script_id", "TEXT REFERENCES scripts(id)")
                 _ensure_column(conn, "renders", "script_fingerprint", "TEXT NOT NULL DEFAULT ''")
+                _ensure_column(conn, "script_cues", "line_src_t0", "REAL")
+                _ensure_column(conn, "script_cues", "line_src_t1", "REAL")
+                _ensure_column(conn, "script_cues", "decision_reason", "TEXT")
+                _ensure_column(conn, "script_cues", "advisor_confidence", "REAL")
+                _ensure_column(conn, "script_cues", "visual_qc_status", "TEXT NOT NULL DEFAULT 'none'")
+                _ensure_column(conn, "script_cues", "visual_qc_report", "TEXT")
+                _ensure_column(conn, "script_cues", "visual_qc_spec_hash", "TEXT")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_script ON jobs(script_id)")
                 conn.commit()
                 _schema_done = True

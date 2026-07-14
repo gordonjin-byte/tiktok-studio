@@ -11,7 +11,7 @@ import json
 import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import overlay_catalog
 from .claude_cli import extract_json, invoke_claude
@@ -24,23 +24,47 @@ an ON-SCREEN text card, an OVERLAY/B-ROLL description, or an EFFECT
 description, written by the human author in plain prose.
 
 For EACH cue, decide:
-- "template": an existing catalog template plausibly matches the cue's intent.
-  Pick its id and fill "props" to match that template's props_schema exactly
-  (required fields must be present; use the cue's own wording for any text
-  props — do not invent unrelated content).
+- "template": an existing catalog template matches the cue's intent — not just
+  its general STRUCTURE (e.g. "two things connected", "before vs after") but
+  its actual CONTENT. Pick its id and fill "props" to match that template's
+  props_schema exactly (required fields must be present; use the cue's own
+  wording for any text props — do not invent unrelated content). Also give a
+  "confidence" from 0.0-1.0: how sure you are this template will actually look
+  like what the cue describes once rendered, not just that its shape fits.
 - "bespoke": no catalog template fits well enough. Write a short creative
   brief (bespoke_brief) describing exactly what the animation should show, and
   a suggested_duration_s. This will be handed to a separate step that
   generates custom Remotion code from your brief, so be concrete and visual.
 
-Prefer "template" whenever a reasonable fit exists — bespoke generation is
-slower and less reliable, so reserve it for genuinely unusual cues.
+RUBRIC — choose "bespoke" (even if a template's general structure loosely
+applies) whenever the cue names a SPECIFIC concrete subject, place, object, or
+visual metaphor that the template's actual visual design does not depict —
+e.g. a map, a specific real-world object, a specific location. Templates are
+generic containers (boxes, banners, lists, counters) — they can show a
+RELATIONSHIP (a two-node "flow" arrow, a before/after split) but they cannot
+show WHAT a map, a phone, or a place looks like. Forcing that content into a
+generic template's shapes is a content mismatch, not a stylistic one.
+
+EXAMPLES (for calibration only — do not reuse this content):
+- Cue: "Two servers exchanging a heartbeat ping every second" → "template":
+  animated-diagram-arrow fits well (confidence ~0.9) — the cue IS the
+  structural idea of two connected nodes, no specific real-world visual named.
+- Cue: "Two phones far apart on a world map, with a message flying between
+  them" → "bespoke" — even though this is structurally "two things connected
+  by an arrow," the cue explicitly names a world map and phones, concrete
+  visual subjects animated-diagram-arrow's two-labeled-box design cannot
+  depict; forcing it into that template renders as two boxes with a thin
+  line, resembling neither a map nor a phone.
+
+Prefer "template" whenever a reasonable CONTENT fit exists, not just a
+structural one — bespoke generation is slower and less reliable, so reserve
+it for cues the catalog genuinely cannot depict.
 
 Do not use any tools (no web search, no file access, no code execution) — you
 have everything you need in this message. Respond directly with ONLY a JSON
 object, no markdown fences, matching exactly:
 {"decisions":[
-  {"cue_id":"...","kind":"template","template":{"template_id":"...","props":{...}},"reason":"..."},
+  {"cue_id":"...","kind":"template","template":{"template_id":"...","props":{...},"confidence":0.0},"reason":"..."},
   {"cue_id":"...","kind":"bespoke","bespoke":{"bespoke_brief":"...","suggested_duration_s":2.0},"reason":"..."}
 ]}
 
@@ -51,6 +75,7 @@ INPUT:
 class TemplateChoice(BaseModel, extra="forbid"):
     template_id: str
     props: dict[str, Any] = {}
+    confidence: float = Field(1.0, ge=0.0, le=1.0)
 
 
 class BespokeChoice(BaseModel, extra="forbid"):
@@ -87,6 +112,7 @@ class CueDecision(BaseModel):
     duration_s: float = 2.0
     reason: str = ""
     advisor_status: Literal["claude", "fallback"] = "fallback"
+    advisor_confidence: Optional[float] = None
 
 
 class CueRenderSpec(BaseModel, extra="forbid"):
@@ -166,13 +192,14 @@ def _to_cue_decisions(resp: _OverlayPlanResponse, cues: list[CueInput]) -> list[
                 decided[cue.cue_id] = CueDecision(
                     cue_id=cue.cue_id, kind="template", template_id=d.template.template_id,
                     props=d.template.props, duration_s=duration, reason=d.reason,
-                    advisor_status="claude")
+                    advisor_status="claude", advisor_confidence=d.template.confidence)
             except Exception:
                 decided[cue.cue_id] = _fallback_one(cue)  # bad props for this cue only — don't fail the batch
         elif d.kind == "bespoke" and d.bespoke is not None:
+            duration = min(d.bespoke.suggested_duration_s, cue.available_duration_s or 999)
             decided[cue.cue_id] = CueDecision(
                 cue_id=cue.cue_id, kind="bespoke", bespoke_brief=d.bespoke.bespoke_brief,
-                duration_s=d.bespoke.suggested_duration_s, reason=d.reason, advisor_status="claude")
+                duration_s=duration, reason=d.reason, advisor_status="claude")
     # any cue the advisor never mentioned still gets a decision
     for cue in cues:
         if cue.cue_id not in decided:

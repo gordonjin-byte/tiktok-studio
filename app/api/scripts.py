@@ -33,6 +33,7 @@ def _script_with_cues(script_id: str) -> dict:
     manifest = overlays.get_manifest(script["video_id"])
     for cue in script["cues"]:
         cue["template_props"] = json.loads(cue.pop("template_props_json") or "{}")
+        cue["visual_qc_report"] = json.loads(cue["visual_qc_report"]) if cue.get("visual_qc_report") else None
         entry = manifest.get(cue["id"], {})
         # distinct from decision_status/bespoke_error: this is a Remotion-level
         # render failure (compiled fine, but the actual render_cue.ts batch
@@ -142,6 +143,7 @@ async def override_cue(script_id: str, cue_id: str, request: Request):
             "decision_kind": "template", "template_id": template_id,
             "template_props_json": json.dumps(props), "decision_status": "decided",
             "user_overridden": 1, "updated_at": now,
+            "visual_qc_status": "none", "visual_qc_report": None, "visual_qc_spec_hash": None,
         })
     else:
         brief = (body.get("bespoke_brief") or "").strip()
@@ -150,6 +152,7 @@ async def override_cue(script_id: str, cue_id: str, request: Request):
         db.update("script_cues", cue_id, {
             "decision_kind": "bespoke", "bespoke_brief": brief,
             "decision_status": "bespoke_pending", "user_overridden": 1, "updated_at": now,
+            "visual_qc_status": "none", "visual_qc_report": None, "visual_qc_spec_hash": None,
         })
         episode_meta = {
             "title": script["episode_title"] or "", "category": script["episode_category"] or "",
@@ -197,11 +200,15 @@ def regenerate_bespoke(script_id: str, cue_id: str):
             # keep using the fallback and silently ignore this module_path.
             "decision_kind": "bespoke",
             "decision_status": "bespoke_ready", "bespoke_module_path": module_path,
-            "bespoke_error": None, "updated_at": now})
+            "bespoke_error": None, "updated_at": now,
+            "visual_qc_status": "none", "visual_qc_report": None, "visual_qc_spec_hash": None,
+        })
         status = "bespoke_ready"
     else:
         db.update("script_cues", cue_id, {
-            "decision_status": "bespoke_failed", "bespoke_error": error[:2000], "updated_at": now})
+            "decision_status": "bespoke_failed", "bespoke_error": error[:2000], "updated_at": now,
+            "visual_qc_status": "none", "visual_qc_report": None, "visual_qc_spec_hash": None,
+        })
         status = "bespoke_failed"
     events.publish("cue_update", {"video_id": script["video_id"], "script_id": script_id,
                                   "cue_id": cue_id, "decision_status": status})

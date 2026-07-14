@@ -112,6 +112,9 @@ BESPOKE_CODEGEN_TIMEOUT_S = 420
 WHISPER_TIMEOUT_S = 900
 RENDER_TIMEOUT_S = 3600
 OVERLAY_RENDER_TIMEOUT_S = 600
+# empirical latency for one image+text vision call was ~4.3s; generous
+# headroom for 3 images + variance
+VISUAL_QC_TIMEOUT_S = 90
 
 
 def ensure_dirs() -> None:

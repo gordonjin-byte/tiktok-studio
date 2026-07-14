@@ -23,6 +23,13 @@ RETAKE_COVERAGE_FLOOR = 0.8
 GLOBAL_FALLBACK_UNMATCHED_RATIO = 0.30
 LOOKBACK = 2
 
+MIN_AVAILABLE_DURATION_S = 0.4
+# catalog's longest default_duration_s is 3.5s; 5.0s gives bespoke some headroom
+# without ever handing a cue a full 7-9s dialogue-line budget (reads as too slow
+# for short-form pacing even if the line itself runs that long)
+MAX_AVAILABLE_DURATION_S = 5.0
+DEFAULT_AVAILABLE_DURATION_S = 2.0
+
 
 class AlignedLine(BaseModel):
     index: int
@@ -36,6 +43,7 @@ class AlignedCue(BaseModel):
     index: int
     kind: str
     anchor_src_t: Optional[float] = None
+    anchor_line_index: Optional[int] = None
     confidence: float = 0.0
 
 
@@ -109,6 +117,34 @@ def align_script(words: list[dict], segments: dict, brain: BrainResult,
 
     aligned_cues = _align_cues(script_doc, aligned_lines, sentences, words)
     return AlignmentResult(lines=aligned_lines, cues=aligned_cues)
+
+
+def cue_available_durations(alignment: AlignmentResult) -> dict[int, float]:
+    """Real per-cue on-screen time budget (SOURCE-time seconds), from the aligned
+    dialogue line each cue anchors to. Formula: time remaining in the line from
+    the anchor point to the line's end, further capped by the gap to the NEXT
+    cue's own anchor (so two cues anchored to the same/adjacent line never get
+    overlapping budgets), floored/ceilinged. Never raises; falls back to
+    DEFAULT_AVAILABLE_DURATION_S for unmatched/unanchored cues."""
+    lines_by_index = {l.index: l for l in alignment.lines}
+    cues_sorted = sorted(alignment.cues, key=lambda c: c.index)
+    out: dict[int, float] = {}
+    for i, cue in enumerate(cues_sorted):
+        if cue.anchor_src_t is None:
+            out[cue.index] = DEFAULT_AVAILABLE_DURATION_S
+            continue
+        line = lines_by_index.get(cue.anchor_line_index) if cue.anchor_line_index is not None else None
+        if line is not None and line.matched and line.t1 is not None:
+            remaining = line.t1 - cue.anchor_src_t
+        else:
+            remaining = DEFAULT_AVAILABLE_DURATION_S
+        next_cue = next((c for c in cues_sorted[i + 1:] if c.anchor_src_t is not None), None)
+        if next_cue is not None:
+            gap = next_cue.anchor_src_t - cue.anchor_src_t
+            if gap > 0:
+                remaining = min(remaining, gap)
+        out[cue.index] = round(max(MIN_AVAILABLE_DURATION_S, min(remaining, MAX_AVAILABLE_DURATION_S)), 3)
+    return out
 
 
 def _global_align(words: list[dict], drop_spans: list[list[float]],
@@ -218,6 +254,7 @@ def _align_cues(script_doc: ScriptDoc, aligned_lines: list[AlignedLine],
 
         out.append(AlignedCue(index=cue.index, kind=cue.kind,
                               anchor_src_t=round(anchor_src_t, 3) if anchor_src_t is not None else None,
+                              anchor_line_index=anchor_line_idx,
                               confidence=round(confidence, 3)))
     return out
 
