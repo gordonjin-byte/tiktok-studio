@@ -25,8 +25,10 @@ ProgressFn = Callable[[str, float, str], None]  # (stage, stage_progress 0..1, m
 QC_MAX_RETRIES = 2
 QC_WIDEN_S = 0.08
 # each escalation costs a full bespoke-codegen cycle + a re-render + a second
-# vision call — real time and money, stay conservative
-VISUAL_QC_MAX_ESCALATIONS = 1
+# vision call — real time and money, but a single attempt was degrading too
+# many cues straight to the plain-text fallback; give bespoke codegen more
+# room to actually converge on a good match before giving up.
+VISUAL_QC_MAX_ESCALATIONS = 2
 
 
 def _noop(stage: str, p: float, msg: str = "") -> None:
@@ -343,7 +345,25 @@ def _apply_qc_result(video_id: str, script_id: str, row: dict, report: dict,
         if fresh_hash:
             db.update("script_cues", row["id"], {"visual_qc_spec_hash": fresh_hash, "updated_at": db.now()})
 
+    def _keep_current_bespoke(reason_report: dict) -> None:
+        # a content-mismatch failure still means real, visible, legible
+        # content — just an imperfect match — so once escalation is exhausted,
+        # keep the last bespoke render rather than throwing it away for a
+        # plain text card. decision_kind/template_id/bespoke_module_path are
+        # left untouched (they already point at the last successful render).
+        db.update("script_cues", row["id"], {
+            "visual_qc_status": "failed", "visual_qc_report": json.dumps(reason_report),
+            "visual_qc_spec_hash": spec_hash, "updated_at": db.now()})
+
+    def _has_keepable_visual() -> bool:
+        return (report.get("failure_mode") == "content_mismatch"
+                and row.get("decision_kind") == "bespoke"
+                and bool(row.get("bespoke_module_path")))
+
     if attempt >= VISUAL_QC_MAX_ESCALATIONS:
+        if _has_keepable_visual():
+            _keep_current_bespoke(report)
+            return {**row, "visual_qc_status": "failed"}
         _degrade_to_fallback(report)
         return {**row, "visual_qc_status": "failed", "decision_kind": "template"}
 
@@ -361,6 +381,13 @@ def _apply_qc_result(video_id: str, script_id: str, row: dict, report: dict,
 
     ok, module_path, error = bespoke_codegen.generate(video_id, row["id"], brief, episode_meta)
     if not ok:
+        # the RETRY's codegen failed, but if the cue already has a working
+        # (if imperfect) bespoke render from before this attempt, that's still
+        # a real visual worth keeping — don't overwrite it with a plain text
+        # card just because the *next* attempt didn't compile.
+        if _has_keepable_visual():
+            _keep_current_bespoke(report)
+            return {**row, "visual_qc_status": "failed"}
         db.update("script_cues", row["id"], {"bespoke_error": error[:2000],
                   "decision_status": "bespoke_failed", "updated_at": db.now()})
         _degrade_to_fallback(report)
