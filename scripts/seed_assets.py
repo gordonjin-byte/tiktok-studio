@@ -46,11 +46,13 @@ def lofi_loop(dur=16.0, root=110.0, name="warm"):
                      + 0.4 * math.sin(2 * math.pi * f * 2.005 * t)
                      + 0.2 * math.sin(2 * math.pi * f * 0.5 * t))
                 out[j] += s * env * 0.06
-    # gentle vinyl noise
+    # gentle vinyl noise texture — kept low relative to the chord partials
+    # (each partial is amplitude 0.06 above) so it reads as a subtle analog
+    # texture, not broadband hiss drowning out the actual pad.
     random.seed(3); lp = 0.0
     for j in range(n):
         lp += 0.02 * (random.uniform(-1, 1) - lp)
-        out[j] += lp * 0.15
+        out[j] += lp * 0.02
     return out
 
 sfx_dir, music_dir = Path(sys.argv[1]), Path(sys.argv[2])
