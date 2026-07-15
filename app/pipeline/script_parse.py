@@ -101,7 +101,20 @@ def _parse_deterministic(raw_text: str) -> tuple[ScriptDoc, int, int]:
         idx += 1
         return line
 
-    title = next_nonblank() or ""
+    # a script may omit the title/meta header entirely and start straight
+    # with a dialogue line (e.g. "0:00 HOOK — ..."); if the very first
+    # non-blank line already looks like a dialogue line, section header, or
+    # ALT HOOKS line, there is no title to consume — treat it as empty and
+    # leave the line for the main state machine below, or the HOOK line
+    # itself silently gets swallowed as a bogus "title" and dropped entirely.
+    save_idx = idx
+    first_line = next_nonblank() or ""
+    if (_DIALOGUE_RE.match(first_line) or _OVERLAYS_HEADER_RE.match(first_line)
+            or _EFFECTS_HEADER_RE.match(first_line) or _ALT_HOOKS_RE.match(first_line)):
+        title = ""
+        idx = save_idx
+    else:
+        title = first_line
     meta: dict[str, str] = {}
     save_idx = idx
     meta_line = next_nonblank()

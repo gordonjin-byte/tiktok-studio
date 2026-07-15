@@ -66,6 +66,9 @@ def get_video(video_id: str):
         r["settings"] = json.loads(r.pop("settings_json"))
         r["qc"] = json.loads(r["qc_json"]) if r.get("qc_json") else None
         r.pop("qc_json", None)
+        for k in ("caption_qc", "audio_qc", "hook_qc", "pacing_qc"):
+            r[k] = json.loads(r[f"{k}_json"]) if r.get(f"{k}_json") else None
+            r.pop(f"{k}_json", None)
     video["jobs"] = db.query(
         "SELECT id, type, status, stage, progress, message, error, created_at, finished_at "
         "FROM jobs WHERE video_id=? ORDER BY created_at DESC LIMIT 10", (video_id,))

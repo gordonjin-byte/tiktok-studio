@@ -78,6 +78,13 @@ export default function Bespoke({{text}}: BespokeProps) {{
 }}
 ```
 
+TIMING — this component will be on screen for exactly {duration_s:.1f} real
+seconds ({frames} frames at {fps}fps). If the brief below describes multiple
+sequential stages, allocate roughly equal, deliberate screen time to each one
+across this FULL duration using useVideoConfig().durationInFrames — do not
+rush transitions into a handful of frames just because more stages exist than
+you're used to pacing; a viewer needs each stage to actually register.
+
 CREATIVE BRIEF (what this specific overlay should show):
 {brief}
 
@@ -124,7 +131,7 @@ def _compile_check(file_path: Path) -> tuple[bool, str]:
 
 
 def generate(video_id: str, cue_id: str, bespoke_brief: str, episode_meta: dict,
-            max_attempts: int = 2) -> tuple[bool, str, str]:
+            duration_s: float = 2.0, max_attempts: int = 2) -> tuple[bool, str, str]:
     """Generates + validates a bespoke component for one cue.
     Returns (success, module_path, error). module_path is relative to
     remotion/src/ (e.g. "generated/{video_id}/{cue_id}"), the same shape
@@ -134,7 +141,9 @@ def generate(video_id: str, cue_id: str, bespoke_brief: str, episode_meta: dict,
     file_path = out_dir / f"{cue_id}.tsx"
     module_path = f"generated/{video_id}/{cue_id}"
 
-    prompt = _PROMPT_TEMPLATE.format(brief=bespoke_brief, episode_meta=episode_meta)
+    frames = max(1, round(duration_s * config.FPS))
+    prompt = _PROMPT_TEMPLATE.format(brief=bespoke_brief, episode_meta=episode_meta,
+                                     duration_s=duration_s, frames=frames, fps=config.FPS)
     last_error = ""
     for attempt in range(max_attempts):
         if attempt > 0:

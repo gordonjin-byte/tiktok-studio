@@ -160,7 +160,7 @@ async def override_cue(script_id: str, cue_id: str, request: Request):
             "new_piece": script["new_piece_text"] or "",
         }
         ok, module_path, error = bespoke_codegen.generate(
-            script["video_id"], cue_id, brief, episode_meta)
+            script["video_id"], cue_id, brief, episode_meta, duration_s=cue.get("duration_s") or 2.0)
         if ok:
             db.update("script_cues", cue_id, {
                 "decision_status": "bespoke_ready", "bespoke_module_path": module_path,
@@ -174,6 +174,39 @@ async def override_cue(script_id: str, cue_id: str, request: Request):
                                       db.query_one("SELECT decision_status FROM script_cues WHERE id=?",
                                                    (cue_id,))["decision_status"]})
     return db.query_one("SELECT * FROM script_cues WHERE id=?", (cue_id,))
+
+
+@router.patch("/api/scripts/{script_id}/cues/{cue_id}/timing")
+async def override_cue_timing(script_id: str, cue_id: str, request: Request):
+    """Lets the user manually pin which dialogue line a cue's timing should be
+    computed from, for when automatic anchoring (script_align.py) picks the
+    wrong line. Takes effect on the next plan — this just records the
+    override and re-triggers alignment; it doesn't recompute timing inline,
+    since alignment needs the cached transcript/brain data run.py already
+    knows how to load."""
+    cue = db.query_one("SELECT * FROM script_cues WHERE id=? AND script_id=?", (cue_id, script_id))
+    if not cue:
+        raise HTTPException(404, "cue not found")
+    script = db.query_one("SELECT * FROM scripts WHERE id=?", (script_id,))
+    body = await request.json()
+    line_index = body.get("manual_anchor_line_index")
+    if line_index is not None:
+        doc = json.loads(script["parsed_json"]) if script.get("parsed_json") else {"lines": []}
+        valid_indices = {l["index"] for l in doc.get("lines", [])}
+        if line_index not in valid_indices:
+            raise HTTPException(422, f"manual_anchor_line_index {line_index} is not a valid dialogue line index")
+
+    db.update("script_cues", cue_id, {
+        "manual_anchor_line_index": line_index, "updated_at": db.now(),
+        "visual_qc_status": "none", "visual_qc_report": None, "visual_qc_spec_hash": None,
+        # a manual pin always wins over the timing agent's skip/anchor call —
+        # force it back to "pending" so the advisor actually re-decides it
+        # (a previously-skipped cue has no template/bespoke decision at all)
+        "overlay_skip": 0, "decision_status": "pending",
+    })
+    settings = RenderSettings.model_validate(db.get_state("last_settings", {}) or {})
+    job_id = worker.enqueue(script["video_id"], "script_plan", settings, [], script_id=script_id)
+    return {"job_id": job_id}
 
 
 @router.post("/api/scripts/{script_id}/cues/{cue_id}/regenerate-bespoke")
@@ -190,7 +223,7 @@ def regenerate_bespoke(script_id: str, cue_id: str):
         "new_piece": script["new_piece_text"] or "",
     }
     ok, module_path, error = bespoke_codegen.generate(
-        script["video_id"], cue_id, cue["bespoke_brief"], episode_meta)
+        script["video_id"], cue_id, cue["bespoke_brief"], episode_meta, duration_s=cue.get("duration_s") or 2.0)
     now = db.now()
     if ok:
         db.update("script_cues", cue_id, {

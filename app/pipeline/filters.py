@@ -82,9 +82,20 @@ def build_filter_script(edl: dict, settings: RenderSettings, out_path: Path,
             idx = next_input
             inputs.append(str(clip["path"]))
             next_input += 1
+            # the overlay clip's own timeline starts at 0 and is short (its
+            # rendered duration) — without shifting it, ffmpeg decodes/plays
+            # it out starting from t=0 of the whole filter graph, completely
+            # independent of when `enable` makes it visible; by the time
+            # enable flips true at start_out (often tens of seconds later),
+            # the clip has long since reached its last frame and sits frozen
+            # there, so it appears as a static image instead of playing its
+            # animation. Shift its PTS forward by start_out so its own
+            # playback begins exactly when it becomes visible.
+            shifted_lab = f"[ovlshift{j}]"
+            parts.append(f"[{idx}:v]setpts=PTS+{clip['start_out']}/TB{shifted_lab}")
             olab = f"[vovl{j}]"
             parts.append(
-                f"{vlab}[{idx}:v]overlay=0:0:enable='between(t,{clip['start_out']},{clip['end_out']})'{olab}")
+                f"{vlab}{shifted_lab}overlay=0:0:enable='between(t,{clip['start_out']},{clip['end_out']})'{olab}")
             vlab = olab
 
     if ass_path is not None:

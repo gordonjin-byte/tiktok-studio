@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS renders (
   settings_hash TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'rendering',
   qc_json TEXT,
+  caption_qc_json TEXT, audio_qc_json TEXT, hook_qc_json TEXT, pacing_qc_json TEXT,
   output_path TEXT,
   duration_s REAL, size_bytes INTEGER,
   created_at TEXT NOT NULL
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS script_cues (
   source_text TEXT NOT NULL,
   script_time_s REAL,
   anchor_src_t REAL,
+  manual_anchor_line_index INTEGER, resolved_anchor_line_index INTEGER,
   line_src_t0 REAL, line_src_t1 REAL,
   resolved_out_t0_s REAL, resolved_out_t1_s REAL,
   match_confidence REAL,
@@ -89,6 +91,9 @@ CREATE TABLE IF NOT EXISTS script_cues (
   decision_reason TEXT, advisor_confidence REAL,
   visual_qc_status TEXT NOT NULL DEFAULT 'none',
   visual_qc_report TEXT, visual_qc_spec_hash TEXT,
+  anchor_word_index INTEGER, timing_status TEXT NOT NULL DEFAULT 'none',
+  timing_checksum TEXT, timing_reason TEXT, overlay_skip INTEGER NOT NULL DEFAULT 0,
+  available_duration_s REAL,
   user_overridden INTEGER NOT NULL DEFAULT 0,
   error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -156,6 +161,18 @@ def get_conn() -> sqlite3.Connection:
                 _ensure_column(conn, "script_cues", "visual_qc_status", "TEXT NOT NULL DEFAULT 'none'")
                 _ensure_column(conn, "script_cues", "visual_qc_report", "TEXT")
                 _ensure_column(conn, "script_cues", "visual_qc_spec_hash", "TEXT")
+                _ensure_column(conn, "script_cues", "manual_anchor_line_index", "INTEGER")
+                _ensure_column(conn, "script_cues", "resolved_anchor_line_index", "INTEGER")
+                _ensure_column(conn, "script_cues", "anchor_word_index", "INTEGER")
+                _ensure_column(conn, "script_cues", "timing_status", "TEXT NOT NULL DEFAULT 'none'")
+                _ensure_column(conn, "script_cues", "timing_checksum", "TEXT")
+                _ensure_column(conn, "script_cues", "timing_reason", "TEXT")
+                _ensure_column(conn, "script_cues", "overlay_skip", "INTEGER NOT NULL DEFAULT 0")
+                _ensure_column(conn, "script_cues", "available_duration_s", "REAL")
+                _ensure_column(conn, "renders", "caption_qc_json", "TEXT")
+                _ensure_column(conn, "renders", "audio_qc_json", "TEXT")
+                _ensure_column(conn, "renders", "hook_qc_json", "TEXT")
+                _ensure_column(conn, "renders", "pacing_qc_json", "TEXT")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_script ON jobs(script_id)")
                 conn.commit()
                 _schema_done = True

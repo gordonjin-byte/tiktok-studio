@@ -102,6 +102,28 @@ def _caption_span_for_line(chunks: list[dict], line_out_t0: Optional[float],
     return span_start, span_end
 
 
+def _dedupe_overlapping_events(events: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Guarantees only one script-driven overlay is ever on screen at a time.
+    Multiple cues can legitimately anchor close together (or land on top of
+    each other after caption-snapping drift even when script_align already
+    spread out same-line ties) -- without this their windows can visually
+    collide. Walks events in start_out order; when the next one would start
+    before the current one ends, truncates the current one's end_out to the
+    next one's start_out, dropping it entirely if that leaves less than
+    MIN_OVERLAY_ON_SCREEN_S on screen."""
+    ordered = sorted(events, key=lambda e: e["start_out"])
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for ev in ordered:
+        if kept and ev["start_out"] < kept[-1]["end_out"]:
+            kept[-1] = {**kept[-1], "end_out": round(ev["start_out"], 3)}
+            if kept[-1]["end_out"] - kept[-1]["start_out"] < MIN_OVERLAY_ON_SCREEN_S:
+                removed = kept.pop()
+                dropped.append({"cue_id": removed["cue_id"], "reason": "collided with a later overlay"})
+        kept.append(ev)
+    return kept, dropped
+
+
 def build_edl(*, words: list[dict], energy: dict, brain: BrainResult,
               settings: RenderSettings, source_duration: float,
               variant: str = "hook_a",
@@ -271,6 +293,9 @@ def build_edl(*, words: list[dict], energy: dict, brain: BrainResult,
             "start_out": round(start_out, 3), "end_out": round(end_out, 3),
             "spec": cue.get("spec", {}),
         })
+
+    overlay_events, collided = _dedupe_overlapping_events(overlay_events)
+    dropped_overlay_events.extend(collided)
 
     return {
         "variant": variant,

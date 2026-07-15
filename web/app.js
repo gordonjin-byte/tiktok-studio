@@ -260,13 +260,16 @@ function SettingsPanel({ schema, settings, baseline, onChange, footer }) {
 // ---------- script panel ----------
 const CUE_TYPE_LABEL = { on_screen: "on-screen", overlay: "overlay", effect: "effect" };
 
-function CueRow({ cue, videoId, onOverride, onRetry }) {
+function CueRow({ cue, videoId, lines, onOverride, onRetry, onSetTiming }) {
   const [editing, setEditing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
+  const [showTiming, setShowTiming] = useState(false);
   const [brief, setBrief] = useState(cue.bespoke_brief || "");
 
-  const badge = cue.decision_status === "bespoke_failed"
+  const badge = cue.decision_status === "skipped"
+    ? html`<span class="badge fallback" title=${cue.timing_reason || "the timing agent found no good moment for this overlay"}>skipped</span>`
+    : cue.decision_status === "bespoke_failed"
     ? html`<span class="badge warn">bespoke failed</span>`
     : cue.decision_kind === "bespoke"
       ? html`<span class="badge bespoke">bespoke${cue.decision_status === "bespoke_ready" ? "" : "…"}</span>`
@@ -283,7 +286,7 @@ function CueRow({ cue, videoId, onOverride, onRetry }) {
         ? html`<span class="badge fallback" title=${qc?.error || "visual QC skipped"}>QC skipped</span>`
         : null;
 
-  const hasWhy = cue.decision_reason || qc;
+  const hasWhy = cue.decision_reason || cue.timing_reason || qc;
 
   return html`
     <tr>
@@ -297,15 +300,39 @@ function CueRow({ cue, videoId, onOverride, onRetry }) {
           <button class="small" onClick=${() => setShowPreview((s) => !s)}>${showPreview ? "hide" : "preview"}</button>`}
         ${hasWhy && html`
           <button class="small" onClick=${() => setShowWhy((s) => !s)}>why?</button>`}
+        ${lines?.length > 0 && html`
+          <button class="small" onClick=${() => setShowTiming((s) => !s)}>timing</button>`}
         ${cue.decision_status === "bespoke_failed" && html`
           <button class="small" onClick=${() => onRetry(cue.id)}>retry</button>`}
         <button class="small" onClick=${() => setEditing((e) => !e)}>edit</button>
       </td>
     </tr>
+    ${showTiming && lines?.length > 0 && html`
+      <tr>
+        <td></td>
+        <td colspan="3">
+          <div class="ctl">
+            <label>Show this overlay over which line?</label>
+            <select
+              value=${cue.manual_anchor_line_index ?? cue.resolved_anchor_line_index ?? ""}
+              onChange=${(e) => onSetTiming(cue.id, e.target.value === "" ? null : Number(e.target.value))}>
+              <option value="" disabled>pick a line…</option>
+              ${lines.map((l) => html`<option value=${l.index}>${l.label} — ${l.text.slice(0, 60)}</option>`)}
+            </select>
+          </div>
+          ${cue.manual_anchor_line_index != null
+            ? html`<div class="muted small">manually pinned
+                <button class="small" style="margin-left:6px" onClick=${() => onSetTiming(cue.id, null)}>reset to automatic</button></div>`
+            : html`<div class="muted small">${cue.timing_status === "agent" ? "AI-timed to a specific word" : "automatically resolved"}${cue.match_confidence != null
+                ? ` (confidence ${Math.round(cue.match_confidence * 100)}%)` : ""}</div>`}
+        </td>
+      </tr>`}
     ${showWhy && hasWhy && html`
       <tr>
         <td></td>
         <td colspan="3">
+          ${cue.timing_reason && html`
+            <div class="muted small">timing agent${cue.timing_status === "agent" ? "" : " (fallback)"}: ${cue.timing_reason}</div>`}
           ${cue.decision_reason && html`
             <div class="muted small">advisor: ${cue.decision_reason}
               ${cue.decision_kind === "template" && cue.advisor_confidence != null &&
@@ -369,6 +396,11 @@ function ScriptPanel({ videoId, activeScriptJob, onRenderWithScript }) {
     }).then(refresh).catch((e) => toastFn(e.message));
   const retry = (cueId) =>
     post(`/api/scripts/${script.id}/cues/${cueId}/regenerate-bespoke`).then(refresh).catch((e) => toastFn(e.message));
+  const setTiming = (cueId, lineIndex) =>
+    api(`/api/scripts/${script.id}/cues/${cueId}/timing`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manual_anchor_line_index: lineIndex }),
+    }).then(() => { toastFn("Timing updated — re-planning"); refresh(); }).catch((e) => toastFn(e.message));
   const replan = () => post(`/api/scripts/${script.id}/plan`)
     .then(() => { toastFn("Re-planning overlays"); refresh(); }).catch((e) => toastFn(e.message));
 
@@ -406,7 +438,8 @@ function ScriptPanel({ videoId, activeScriptJob, onRenderWithScript }) {
       ${script.cues.length > 0 && html`
         <table class="list">
           <tr><th>type</th><th>cue</th><th>decision</th><th></th></tr>
-          ${script.cues.map((cue) => html`<${CueRow} cue=${cue} videoId=${videoId} onOverride=${override} onRetry=${retry} />`)}
+          ${script.cues.map((cue) => html`<${CueRow} cue=${cue} videoId=${videoId} lines=${script.parsed?.lines || []}
+              onOverride=${override} onRetry=${retry} onSetTiming=${setTiming} />`)}
         </table>`}
       <div class="player-actions" style="margin-top:12px">
         <button onClick=${replan} disabled=${planning}>↻ Re-plan overlays</button>
@@ -477,6 +510,10 @@ function VideoView({ id }) {
   };
 
   const qc = current?.qc;
+  const qcChecks = [
+    ["captions", current?.caption_qc], ["music", current?.audio_qc],
+    ["hook", current?.hook_qc], ["pacing", current?.pacing_qc],
+  ].filter(([, r]) => r && r.checked);
   return html`
     <h1>${video.filename}
       ${brainStatus === "claude" && html` <span class="badge claude">AI edit · Claude</span>`}
@@ -513,6 +550,19 @@ function VideoView({ id }) {
             <div class="stills">
               ${[0, 1, 2, 3, 4, 5].map((n) => html`<img src=${`/api/renders/${current.id}/still/${n}`} loading="lazy" />`)}
             </div>
+          </div>`}
+        ${qcChecks.length > 0 && html`
+          <div class="qc-box">
+            <b>AI QC</b>
+            ${qcChecks.map(([label, r]) => html`
+              <span class="badge ${r.verdict === "pass" ? "claude" : "warn"}"
+                    title=${r.problem || r.suggestion || ""}>
+                ${label} ${r.verdict === "pass" ? "✓" : `⚠ ${r.failure_mode}`}
+              </span>`)}
+            ${qcChecks.filter(([, r]) => r.verdict === "fail").map(([label, r]) => html`
+              <div class="muted small" style="margin-top:6px">
+                <b>${label}:</b> ${r.problem}${r.suggestion ? ` — ${r.suggestion}` : ""}
+              </div>`)}
           </div>`}
       </div>
       <div>

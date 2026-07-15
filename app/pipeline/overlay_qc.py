@@ -32,7 +32,7 @@ background, ignore it, it is not part of the overlay.
 WHAT THIS OVERLAY IS SUPPOSED TO SHOW:
 "{expected_description}"
 
-Judge it against exactly these three failure modes:
+Judge it against exactly these four failure modes:
 1. BLANK — one or more frames show nothing but the background (no text, no
    shape, no visible content) when the overlay should already be visible at
    that point in its timeline.
@@ -43,14 +43,23 @@ Judge it against exactly these three failure modes:
    wrong objects, wrong visual metaphor — e.g. a generic two-box arrow diagram
    standing in for something that was supposed to show a map, a specific
    object, or a specific place).
+4. TOO BRIEF — this clip is only {duration_s:.2f} REAL seconds long, so the 3
+   samples above are only ~{sample_gap_s:.2f}s apart in actual time. If the
+   description above implies multiple sequential stages/beats (e.g. "X, then
+   Y, then Z" or several distinct state changes) but {duration_s:.2f}s is not
+   remotely enough real time for a human to register each one distinctly —
+   even if each individual still technically shows legible content — that is
+   a failure here, not a pass. A single-state cue (one shape, one label) can
+   legitimately be fine even at this duration; judge based on how many beats
+   THIS specific description implies, not a fixed threshold.
 
 A minor stylistic difference (exact colors, exact wording of an on-screen
-label) is NOT a failure — only fail for the three modes above.
+label) is NOT a failure — only fail for the four modes above.
 
 Do not use any tools (no web search, no file access, no code execution) — you
 have everything you need in this message. Respond with ONLY a JSON object, no
 markdown fences, matching exactly:
-{{"verdict":"pass"|"fail","failure_mode":"none"|"blank"|"illegible"|"content_mismatch","problem":"...","suggestion":"..."}}
+{{"verdict":"pass"|"fail","failure_mode":"none"|"blank"|"illegible"|"content_mismatch"|"too_brief","problem":"...","suggestion":"..."}}
 
 "problem" must be a one-sentence, concrete description of what is visibly
 wrong (empty string if verdict is "pass"). "suggestion" must be one concrete,
@@ -62,7 +71,7 @@ curved dashed line between them, not two boxes."
 
 class VisualQCJudgment(BaseModel, extra="forbid"):
     verdict: Literal["pass", "fail"]
-    failure_mode: Literal["none", "blank", "illegible", "content_mismatch"] = "none"
+    failure_mode: Literal["none", "blank", "illegible", "content_mismatch", "too_brief"] = "none"
     problem: str = ""
     suggestion: str = ""
 
@@ -91,8 +100,9 @@ def run_overlay_visual_qc(*, video_id: str, cue_id: str, expected_description: s
     try:
         frames = _extract_qc_frames(video_id, cue_id, duration_s, holder=holder)
         ts = [duration_s * f for f in _QC_TIMESTAMPS_FRAC]
+        sample_gap_s = (max(ts) - min(ts)) / max(1, len(ts) - 1) if len(ts) > 1 else duration_s
         prompt = _PROMPT_TEMPLATE.format(
-            n=len(frames), duration_s=duration_s,
+            n=len(frames), duration_s=duration_s, sample_gap_s=sample_gap_s,
             timestamps=", ".join(f"{t:.2f}s" for t in ts),
             expected_description=expected_description.strip()[:1500])
         text = invoke_claude_vision(frames, prompt, timeout_s=config.VISUAL_QC_TIMEOUT_S)

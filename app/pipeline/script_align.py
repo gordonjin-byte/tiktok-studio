@@ -24,10 +24,13 @@ GLOBAL_FALLBACK_UNMATCHED_RATIO = 0.30
 LOOKBACK = 2
 
 MIN_AVAILABLE_DURATION_S = 0.4
-# catalog's longest default_duration_s is 3.5s; 5.0s gives bespoke some headroom
-# without ever handing a cue a full 7-9s dialogue-line budget (reads as too slow
-# for short-form pacing even if the line itself runs that long)
-MAX_AVAILABLE_DURATION_S = 5.0
+# catalog's longest default_duration_s is 3.5s; 6.5s gives bespoke real
+# headroom for genuinely multi-stage content (a 4-8 beat animation needs
+# ~0.8-1.5s per beat to register) without ever handing a cue a full 7-9s
+# dialogue-line budget (reads as too slow for short-form pacing even if the
+# line itself runs that long) -- the gap-to-next-cue cap below is what
+# actually prevents overlap, this is just an outer sanity ceiling.
+MAX_AVAILABLE_DURATION_S = 6.5
 DEFAULT_AVAILABLE_DURATION_S = 2.0
 
 
@@ -69,7 +72,13 @@ def _retake_covered(sentence: dict, drop_spans: list[list[float]]) -> bool:
 
 
 def align_script(words: list[dict], segments: dict, brain: BrainResult,
-                 script_doc: ScriptDoc) -> AlignmentResult:
+                 script_doc: ScriptDoc,
+                 manual_overrides: Optional[dict[int, int]] = None) -> AlignmentResult:
+    """manual_overrides: {cue.index: dialogue_line.index} — a user-specified
+    anchor line for a cue, set via the dashboard's timing control when
+    automatic resolution picks the wrong line. Takes precedence over both the
+    parse-time attachment (ON-SCREEN cues) and the authored-timestamp-based
+    fallback search."""
     sentences = segments["sentences"]
     drop_spans = [d for rt in brain.retakes for d in rt.drop_spans]
     sent_tokens = [_tokenize(s["text"]) for s in sentences]
@@ -115,17 +124,25 @@ def align_script(words: list[dict], segments: dict, brain: BrainResult,
     if script_doc.lines and unmatched / len(script_doc.lines) > GLOBAL_FALLBACK_UNMATCHED_RATIO:
         aligned_lines = _global_align(words, drop_spans, script_doc.lines)
 
-    aligned_cues = _align_cues(script_doc, aligned_lines, sentences, words)
+    aligned_cues = _align_cues(script_doc, aligned_lines, sentences, words, manual_overrides)
     return AlignmentResult(lines=aligned_lines, cues=aligned_cues)
 
 
-def cue_available_durations(alignment: AlignmentResult) -> dict[int, float]:
-    """Real per-cue on-screen time budget (SOURCE-time seconds), from the aligned
-    dialogue line each cue anchors to. Formula: time remaining in the line from
-    the anchor point to the line's end, further capped by the gap to the NEXT
-    cue's own anchor (so two cues anchored to the same/adjacent line never get
-    overlapping budgets), floored/ceilinged. Never raises; falls back to
-    DEFAULT_AVAILABLE_DURATION_S for unmatched/unanchored cues."""
+def cue_available_durations(alignment: AlignmentResult,
+                            window_overrides: Optional[dict[int, tuple[float, float]]] = None
+                            ) -> dict[int, float]:
+    """Real per-cue on-screen time budget (SOURCE-time seconds). Formula: time
+    remaining from the anchor point to the end of its "home" window, further
+    capped by the gap to the NEXT cue's own anchor (so two cues anchored close
+    together never get overlapping budgets), floored/ceilinged. Never raises;
+    falls back to DEFAULT_AVAILABLE_DURATION_S for unmatched/unanchored cues.
+
+    window_overrides: {cue.index: (t0, t1)} -- when the overlay-timing agent
+    (overlay_timing_agent.py) resolves a cue to a specific WORD rather than a
+    whole dialogue line, its "home" window is the sentence containing that
+    word, not the line the heuristic originally matched -- callers pass that
+    here instead of relying on the line lookup below."""
+    window_overrides = window_overrides or {}
     lines_by_index = {l.index: l for l in alignment.lines}
     cues_sorted = sorted(alignment.cues, key=lambda c: c.index)
     out: dict[int, float] = {}
@@ -133,11 +150,15 @@ def cue_available_durations(alignment: AlignmentResult) -> dict[int, float]:
         if cue.anchor_src_t is None:
             out[cue.index] = DEFAULT_AVAILABLE_DURATION_S
             continue
-        line = lines_by_index.get(cue.anchor_line_index) if cue.anchor_line_index is not None else None
-        if line is not None and line.matched and line.t1 is not None:
-            remaining = line.t1 - cue.anchor_src_t
+        if cue.index in window_overrides:
+            _, t1 = window_overrides[cue.index]
+            remaining = t1 - cue.anchor_src_t
         else:
-            remaining = DEFAULT_AVAILABLE_DURATION_S
+            line = lines_by_index.get(cue.anchor_line_index) if cue.anchor_line_index is not None else None
+            if line is not None and line.matched and line.t1 is not None:
+                remaining = line.t1 - cue.anchor_src_t
+            else:
+                remaining = DEFAULT_AVAILABLE_DURATION_S
         next_cue = next((c for c in cues_sorted[i + 1:] if c.anchor_src_t is not None), None)
         if next_cue is not None:
             gap = next_cue.anchor_src_t - cue.anchor_src_t
@@ -197,7 +218,9 @@ _QUOTED_RE = re.compile(r"['‘’]([^'‘’]{2,30})['‘’]|\"([^\"]{2,30})\"
 
 
 def _align_cues(script_doc: ScriptDoc, aligned_lines: list[AlignedLine],
-                sentences: list[dict], words: list[dict]) -> list[AlignedCue]:
+                sentences: list[dict], words: list[dict],
+                manual_overrides: Optional[dict[int, int]] = None) -> list[AlignedCue]:
+    manual_overrides = manual_overrides or {}
     by_index = {a.index: a for a in aligned_lines}
     matched_lines = [a for a in aligned_lines if a.matched]
 
@@ -221,14 +244,18 @@ def _align_cues(script_doc: ScriptDoc, aligned_lines: list[AlignedLine],
 
     out: list[AlignedCue] = []
     for cue in script_doc.cues:
-        anchor_line_idx = cue.anchor_line_index
-        if anchor_line_idx is None:
-            anchor_line_idx = 0
-            for line in script_doc.lines:
-                if line.authored_ts <= cue.authored_ts:
-                    anchor_line_idx = line.index
-                else:
-                    break
+        manual_line_idx = manual_overrides.get(cue.index)
+        if manual_line_idx is not None:
+            anchor_line_idx = manual_line_idx
+        else:
+            anchor_line_idx = cue.anchor_line_index
+            if anchor_line_idx is None:
+                anchor_line_idx = 0
+                for line in script_doc.lines:
+                    if line.authored_ts <= cue.authored_ts:
+                        anchor_line_idx = line.index
+                    else:
+                        break
         next_line = next((l for l in script_doc.lines if l.index == anchor_line_idx + 1), None)
         window = line_window(anchor_line_idx)
 
@@ -252,11 +279,51 @@ def _align_cues(script_doc: ScriptDoc, aligned_lines: list[AlignedLine],
             anchor_src_t = nearest_matched_time(cue.authored_ts)
             confidence = 0.1 if anchor_src_t is not None else 0.0
 
+        # a user-specified anchor line is trusted outright, regardless of
+        # whatever score the underlying line match happened to get
+        if manual_line_idx is not None and anchor_src_t is not None:
+            confidence = 1.0
+
         out.append(AlignedCue(index=cue.index, kind=cue.kind,
                               anchor_src_t=round(anchor_src_t, 3) if anchor_src_t is not None else None,
                               anchor_line_index=anchor_line_idx,
                               confidence=round(confidence, 3)))
+    _respread_colliding_anchors(out, line_window)
     return out
+
+
+def _respread_colliding_anchors(cues: list["AlignedCue"], line_window) -> None:
+    """Multiple ON-SCREEN/OVERLAY/EFFECT cues commonly share one authored
+    timestamp in a script (e.g. two B-ROLL ideas listed under the same [0:36]
+    marker) -- the fractional-position fallback above then resolves them to
+    the EXACT same anchor_src_t, so their on-screen windows fully collide.
+    A user-pinned manual anchor is never touched here (it's deliberate).
+    Detects same-line groups that actually collided and spaces them evenly
+    across the line's real aligned window, preserving relative (cue-index)
+    order, so downstream duration budgeting (cue_available_durations) and
+    edl.py's caption-snapping see distinct, ordered anchor points."""
+    by_line: dict[int, list[int]] = {}
+    for i, c in enumerate(cues):
+        if c.anchor_line_index is not None and c.anchor_src_t is not None:
+            by_line.setdefault(c.anchor_line_index, []).append(i)
+    for line_idx, idxs in by_line.items():
+        if len(idxs) < 2:
+            continue
+        times = [cues[i].anchor_src_t for i in idxs]
+        if len(set(round(t, 2) for t in times)) == len(times):
+            continue  # already distinct -- real, independently-resolved anchors
+        window = line_window(line_idx)
+        if window is None:
+            continue
+        t0, t1 = window
+        movable = [i for i in idxs if cues[i].confidence < 1.0]  # 1.0 == manual pin, never move
+        if len(movable) < 2:
+            continue
+        idxs_sorted = sorted(movable, key=lambda i: (cues[i].anchor_src_t, i))
+        n = len(idxs_sorted)
+        for rank, i in enumerate(idxs_sorted):
+            frac = (rank + 0.5) / n
+            cues[i].anchor_src_t = round(t0 + frac * (t1 - t0), 3)
 
 
 def _first_quoted_word(text: str) -> Optional[str]:

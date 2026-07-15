@@ -20,11 +20,17 @@ from .pipeline.ffmpeg import PipelineCancelled, ProcHolder
 _wakeup: Optional[asyncio.Event] = None
 _holders: dict[str, ProcHolder] = {}  # job_id → holder (for cancel)
 
-# stage weights for overall progress ("full"/"render"/"analyze" jobs)
+# stage weights for overall progress ("full"/"render"/"analyze" jobs).
+# caption_qc/audio_qc/hook_qc/pacing_qc run once per variant (inside
+# run_render_variant, after that variant's own render:hook_X finishes) but
+# share one stage-name bucket across all 3 variants -- the progress bar
+# curve isn't perfectly linear across a multi-variant render as a result,
+# but every stage still contributes a real (non-zero, non-100%-jump) share.
 _WEIGHTS = [("ingest", 4), ("transcribe", 15), ("analyze", 5), ("brain", 6),
             ("render_overlays", 10), ("visual_qc", 8),
-            ("render:hook_a", 16), ("render:hook_b", 16), ("render:hook_c", 16),
-            ("qc", 8), ("package", 2)]
+            ("render:hook_a", 12), ("render:hook_b", 12), ("render:hook_c", 12),
+            ("caption_qc", 4), ("audio_qc", 4), ("hook_qc", 4),
+            ("qc", 6), ("package", 2)]
 # stage weights for "script_plan" jobs (parse already ran in the API layer)
 _SCRIPT_PLAN_WEIGHTS = [("align", 15), ("advise", 45), ("codegen", 40)]
 
@@ -231,6 +237,10 @@ def _run_job(job: dict, holder: ProcHolder) -> None:
                 overlay_clips=overlay_clips)
             db.update("renders", render_id, {
                 "status": summary["status"], "qc_json": json.dumps(summary["qc"]),
+                "caption_qc_json": json.dumps(summary.get("caption_qc")),
+                "audio_qc_json": json.dumps(summary.get("audio_qc")),
+                "hook_qc_json": json.dumps(summary.get("hook_qc")),
+                "pacing_qc_json": json.dumps(summary.get("pacing_qc")),
                 "output_path": summary["output_path"],
                 "duration_s": summary["duration_s"], "size_bytes": summary["size_bytes"]})
             if script_id:

@@ -32,9 +32,10 @@ For EACH cue, decide:
   "confidence" from 0.0-1.0: how sure you are this template will actually look
   like what the cue describes once rendered, not just that its shape fits.
 - "bespoke": no catalog template fits well enough. Write a short creative
-  brief (bespoke_brief) describing exactly what the animation should show, and
-  a suggested_duration_s. This will be handed to a separate step that
-  generates custom Remotion code from your brief, so be concrete and visual.
+  brief (bespoke_brief) describing exactly what the animation should show, a
+  suggested_duration_s, and whether it needs a backdrop (see below). This will
+  be handed to a separate step that generates custom Remotion code from your
+  brief, so be concrete and visual.
 
 RUBRIC — choose "bespoke" (even if a template's general structure loosely
 applies) whenever the cue names a SPECIFIC concrete subject, place, object, or
@@ -60,12 +61,33 @@ Prefer "template" whenever a reasonable CONTENT fit exists, not just a
 structural one — bespoke generation is slower and less reliable, so reserve
 it for cues the catalog genuinely cannot depict.
 
+DURATION (bespoke only) — suggested_duration_s must be grounded in how many
+distinct sequential visual BEATS/STAGES the brief implies, not a flat default.
+Count the beats (each "then", each state change, each arrow in a described
+sequence is one beat) and budget roughly 0.8-1.5s per beat so a viewer can
+actually register each one — a single-state cue (a highlight, a label popping
+in) needs much less, ~1-1.5s total; do not pad it just because more time is
+available. Example: "message drops into a queue box, then delivers when the
+phone reconnects, grey tick becoming blue ticks" is 3-4 beats → ~3.5-4.5s.
+"A single glowing dot pulsing on a server icon" is 1 beat → ~1.2s.
+
+BACKDROP (bespoke only) — bespoke components render on a fully transparent
+canvas by default, composited directly over arbitrary video footage. Decide
+needs_backdrop: true whenever the content is small, thin-lined, or low-contrast
+(icons, thin arrows, small text) and would be hard to see over unpredictable
+footage without help — give it a solid or semi-opaque full-bleed (or padded)
+panel behind the content. Set it false only when the content is inherently
+large/bold/high-contrast enough to read on its own (e.g. giant bold text
+filling most of the frame). A full-canvas illustrated scene (like a world map)
+effectively IS its own backdrop — still set true so the codegen step knows to
+paint one, rather than leaving it to chance.
+
 Do not use any tools (no web search, no file access, no code execution) — you
 have everything you need in this message. Respond directly with ONLY a JSON
 object, no markdown fences, matching exactly:
 {"decisions":[
   {"cue_id":"...","kind":"template","template":{"template_id":"...","props":{...},"confidence":0.0},"reason":"..."},
-  {"cue_id":"...","kind":"bespoke","bespoke":{"bespoke_brief":"...","suggested_duration_s":2.0},"reason":"..."}
+  {"cue_id":"...","kind":"bespoke","bespoke":{"bespoke_brief":"...","suggested_duration_s":2.0,"needs_backdrop":true,"backdrop_reason":"..."},"reason":"..."}
 ]}
 
 INPUT:
@@ -81,6 +103,8 @@ class TemplateChoice(BaseModel, extra="forbid"):
 class BespokeChoice(BaseModel, extra="forbid"):
     bespoke_brief: str
     suggested_duration_s: float = 2.5
+    needs_backdrop: bool = True
+    backdrop_reason: str = ""
 
 
 class _CueDecisionResp(BaseModel, extra="forbid"):
@@ -125,10 +149,18 @@ class CueRenderSpec(BaseModel, extra="forbid"):
     z_index: int = 0
 
 
-def cue_advisor_checksum(source_text: str, nearby_dialogue: str, episode_meta: dict) -> str:
+def cue_advisor_checksum(source_text: str, nearby_dialogue: str, episode_meta: dict,
+                         available_duration_s: float = 0.0) -> str:
     payload = json.dumps({
         "source_text": source_text, "nearby_dialogue": nearby_dialogue,
         "episode_meta": episode_meta, "catalog_version": overlay_catalog.catalog_version(),
+        # rounded to 1dp: the timing agent can retime a cue onto a tighter
+        # budget (e.g. a later word anchor with less room before the next
+        # cue) without changing its text at all -- a cached decision's
+        # duration_s must be invalidated when that happens, or it can render
+        # longer than the window that was actually budgeted for it and
+        # collide with the next overlay.
+        "available_duration_s": round(available_duration_s, 1),
     }, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
@@ -176,6 +208,17 @@ def _claude_plan(cues: list[CueInput], episode_meta: dict) -> list[CueDecision]:
     raise RuntimeError(f"overlay advisor failed validation twice: {last_err}")
 
 
+def _brief_with_backdrop_note(bespoke: BespokeChoice) -> str:
+    """Folds the advisor's backdrop decision into the brief text itself
+    (no separate persisted column) — bespoke_codegen.py's prompt reads the
+    brief verbatim, so this is the simplest way to get the instruction to it."""
+    note = ("Include a solid or semi-opaque full-bleed backdrop panel behind "
+            "the content so it stays legible over arbitrary video footage.") \
+        if bespoke.needs_backdrop else \
+        "No backdrop needed — render on a fully transparent canvas."
+    return f"{bespoke.bespoke_brief}\n\n({note})"
+
+
 def _to_cue_decisions(resp: _OverlayPlanResponse, cues: list[CueInput]) -> list[CueDecision]:
     by_id = {c.cue_id: c for c in cues}
     decided: dict[str, CueDecision] = {}
@@ -198,7 +241,8 @@ def _to_cue_decisions(resp: _OverlayPlanResponse, cues: list[CueInput]) -> list[
         elif d.kind == "bespoke" and d.bespoke is not None:
             duration = min(d.bespoke.suggested_duration_s, cue.available_duration_s or 999)
             decided[cue.cue_id] = CueDecision(
-                cue_id=cue.cue_id, kind="bespoke", bespoke_brief=d.bespoke.bespoke_brief,
+                cue_id=cue.cue_id, kind="bespoke",
+                bespoke_brief=_brief_with_backdrop_note(d.bespoke),
                 duration_s=duration, reason=d.reason, advisor_status="claude")
     # any cue the advisor never mentioned still gets a decision
     for cue in cues:
